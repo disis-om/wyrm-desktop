@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "productName": "Wyrm",
+  "packageName": "com.wyrm.desktop",
+  "platform": "windows",
+  "versionCode": 100,
+  "versionName": "1.0.0",
+  "minimumVersionCode": 0,
+  "mandatory": false,
+  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.0.0/WyrmSetup-1.0.0.exe",
+  "setupSize": 103793897,
+  "sha256": "9cd97d4073e234c92b3a00ee673c3209d972db109d4eb0a3b42abc21bade03b8",
+  "publishedAt": "2026-10-11T22:23:09Z",
+  "headline": "A new version of Wyrm",
+  "author": "OM Rajput",
+  "releaseNotes": ["The first Wyrm for Windows", "The same engine, skins, Trails and Social as the phones", "Your settings follow your account", "Updates from inside Wyrm (Settings \u00e2\u20ac\u00ba Version)"]
+}
