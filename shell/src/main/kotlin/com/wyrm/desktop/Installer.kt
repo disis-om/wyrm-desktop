@@ -128,6 +128,38 @@ internal object Setup {
     }
 
     /**
+     * The "Apps" entry, written with `reg import` from a .reg file: a value with
+     * quotes and a path with spaces ("Om Rajput") never survives Java's command
+     * line quoting for `reg add`, which left UninstallString out (1.0.0: the
+     * Uninstall button in Windows' Apps list was greyed out).
+     */
+    private fun writeUninstallEntry(exe: File, total: Long) {
+        fun text(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        fun dword(value: Long) = "dword:" + "%08x".format(value.coerceIn(0L, 0xFFFFFFFFL))
+        val body = buildString {
+            append("Windows Registry Editor Version 5.00\r\n\r\n")
+            append("[").append(UNINSTALL_KEY.replace("HKCU", "HKEY_CURRENT_USER")).append("]\r\n")
+            append("\"DisplayName\"=").append(text("Wyrm")).append("\r\n")
+            append("\"DisplayVersion\"=").append(text(BuildConfig.VERSION_NAME)).append("\r\n")
+            append("\"Publisher\"=").append(text("OM Rajput")).append("\r\n")
+            append("\"DisplayIcon\"=").append(text(exe.absolutePath)).append("\r\n")
+            append("\"InstallLocation\"=").append(text(installDir.absolutePath)).append("\r\n")
+            append("\"UninstallString\"=").append(text("\"${exe.absolutePath}\" --uninstall")).append("\r\n")
+            append("\"EstimatedSize\"=").append(dword(total / 1024)).append("\r\n")
+            append("\"NoModify\"=").append(dword(1)).append("\r\n")
+            append("\"NoRepair\"=").append(dword(1)).append("\r\n")
+        }
+        val file = File.createTempFile("wyrm-uninstall-", ".reg")
+        try {
+            // .reg files are UTF-16 LE with a byte order mark.
+            file.writeBytes(byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + body.toByteArray(Charsets.UTF_16LE))
+            reg("import", file.absolutePath)
+        } finally {
+            file.delete()
+        }
+    }
+
+    /**
      * Copies the app image into place, reporting 0..1 and a step for the screen.
      * Throws with a sentence the player can read.
      */
@@ -188,15 +220,7 @@ internal object Setup {
         WinApi.shortcut(startMenuShortcut(), exe, "", installDir, exe, "Wyrm")
         if (desktop) WinApi.shortcut(desktopShortcut(), exe, "", installDir, exe, "Wyrm")
         progress(0.98f, "Registering Wyrm")
-        reg("add", UNINSTALL_KEY, "/v", "DisplayName", "/t", "REG_SZ", "/d", "Wyrm", "/f")
-        reg("add", UNINSTALL_KEY, "/v", "DisplayVersion", "/t", "REG_SZ", "/d", BuildConfig.VERSION_NAME, "/f")
-        reg("add", UNINSTALL_KEY, "/v", "Publisher", "/t", "REG_SZ", "/d", "OM Rajput", "/f")
-        reg("add", UNINSTALL_KEY, "/v", "DisplayIcon", "/t", "REG_SZ", "/d", exe.absolutePath, "/f")
-        reg("add", UNINSTALL_KEY, "/v", "InstallLocation", "/t", "REG_SZ", "/d", installDir.absolutePath, "/f")
-        reg("add", UNINSTALL_KEY, "/v", "UninstallString", "/t", "REG_SZ", "/d", "\"${exe.absolutePath}\" --uninstall", "/f")
-        reg("add", UNINSTALL_KEY, "/v", "EstimatedSize", "/t", "REG_DWORD", "/d", (total / 1024).toString(), "/f")
-        reg("add", UNINSTALL_KEY, "/v", "NoModify", "/t", "REG_DWORD", "/d", "1", "/f")
-        reg("add", UNINSTALL_KEY, "/v", "NoRepair", "/t", "REG_DWORD", "/d", "1", "/f")
+        writeUninstallEntry(exe, total)
         progress(1f, "Done")
     }
 
