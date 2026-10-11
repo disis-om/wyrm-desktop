@@ -1,0 +1,30 @@
+# Build output
+build/
+.gradle/
+.kotlin/
+dist/
+compile_commands.json
+__pycache__/
+*.py[cod]
+*.exe
+*.msi
+*.dll
+*.log
+
+# Machine-local configuration
+local.properties
+.idea/
+*.iml
+
+# Signing material stays private
+/release-signing/
+*.jks
+*.keystore
+*.p12
+*.key
+*.pem
+.env*
+
+# Only README.md is published
+*.md
+!/README.md
