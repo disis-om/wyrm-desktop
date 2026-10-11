@@ -1,0 +1,28 @@
+// WyrmSetup.exe's icon, version and manifest (D8).
+#include <windows.h>
+
+1 ICON "../shell/packaging/wyrm.ico"
+1 RT_MANIFEST "setup_stub.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "OM Rajput"
+      VALUE "FileDescription", "Wyrm Setup"
+      VALUE "ProductName", "Wyrm"
+      VALUE "LegalCopyright", "(c) 2026 OM Rajput"
+      VALUE "OriginalFilename", "WyrmSetup.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
