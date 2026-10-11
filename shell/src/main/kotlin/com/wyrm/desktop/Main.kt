@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.background
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -197,8 +198,10 @@ private fun runApp() = application {
             window.addWindowFocusListener(listener)
             onDispose { window.removeWindowFocusListener(listener) }
         }
-        LaunchedEffect(Unit) {
-            val paper = java.awt.Color(com.wyrm.omrajput.ui.Wyrm.Paper.toArgb(), true)
+        // Follows the theme (a dark theme's paper too), so the strip and the edges match the app.
+        val themePaper = com.wyrm.omrajput.ui.Wyrm.Paper
+        LaunchedEffect(themePaper) {
+            val paper = java.awt.Color(themePaper.toArgb(), true)
             window.background = paper
             window.contentPane.background = paper
             window.rootPane.background = paper
@@ -239,7 +242,8 @@ private fun runApp() = application {
             if (strip && !signingIn) TitleStripHeight else 0.dp, tween(220), label = "strip-space",
         )
         LaunchedEffect(signingIn) { if (signingIn) WindowChrome.forget() }
-        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+        // The strip sits on the app's own paper: one seamless surface in every theme.
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().background(com.wyrm.omrajput.ui.Wyrm.Paper)) {
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().padding(top = stripSpace)) { WyrmApp() }
             // A new version's card, over the app (never over the sign-in or a match).
             if (!signingIn && !gameOwnsWindow) UpdateCardHost(exit = ::close)
