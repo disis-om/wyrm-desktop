@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "productName": "Wyrm",
+  "packageName": "com.wyrm.desktop",
+  "platform": "windows",
+  "versionCode": 101,
+  "versionName": "1.0.1",
+  "minimumVersionCode": 0,
+  "mandatory": false,
+  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.0.1/WyrmSetup-1.0.1.exe",
+  "setupSize": 103794789,
+  "sha256": "3557a0fb942c1f7319e525298b831672b32a2f4aadf1464bc93080497c07d354",
+  "publishedAt": "2026-10-11T22:31:43Z",
+  "headline": "A new version of Wyrm",
+  "author": "OM Rajput",
+  "releaseNotes": ["Uninstall works from Windows' Apps list", "The title bar matches your theme"]
+}
