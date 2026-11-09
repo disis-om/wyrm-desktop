@@ -56,6 +56,7 @@ import java.awt.event.KeyEvent
  * always, Eyes Back at the end of its ext block on the desktop).
  */
 internal object DesktopKeys {
+    var capturing = false
     /** Engine key codes (GLFW's, the mouse's buttons above GLFW's last key). */
     const val NONE = -1
     private const val MOUSE_RIGHT = 401
@@ -111,6 +112,9 @@ internal object DesktopKeys {
 
     /** Why a key cannot be bound, for the keys the window keeps. */
     fun reserved(code: Int): String? = when (code) {
+        DesktopShortcuts.binding(DesktopShortcuts.Action.CHAT) -> "That key opens arena chat. Change it in Across Wyrm first."
+        DesktopShortcuts.binding(DesktopShortcuts.Action.CHAT_PANEL) -> "That key folds arena chat. Change it in Across Wyrm first."
+        KeyEvent.VK_TAB -> "Tab switches the arena chat tab."
         KeyEvent.VK_F11 -> "F11 is full screen."
         KeyEvent.VK_ENTER -> "Enter is kept for chat."
         KeyEvent.VK_ALT, KeyEvent.VK_WINDOWS, KeyEvent.VK_META -> "That key belongs to Windows."
@@ -153,7 +157,13 @@ internal object DesktopKeys {
 @Composable
 internal fun DesktopControlsPage() {
     LaunchedEffect(Unit) { EngineSettings.refreshKeys() }
+    AppShortcutsPage()
+    CursorStylesPage()
     var listening by remember { mutableStateOf<Int?>(null) }
+    androidx.compose.runtime.DisposableEffect(listening) {
+        DesktopKeys.capturing = listening != null
+        onDispose { DesktopKeys.capturing = false }
+    }
     var note by remember { mutableStateOf<String?>(null) }
     val rows = EngineSettings.hotkeys.associateBy { it.action }
 

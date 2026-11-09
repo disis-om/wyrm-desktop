@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -73,12 +74,26 @@ internal fun SlitherStage(
     top: Dp,
     /** 0 = the whole snake, 1 = the camera on its face (accessories, Wyrm looks). */
     faceZoom: Float = 0f,
+    /** The worn tag on NTL's chooser rope, as the phones' preview (-1: none). */
+    tag: Int = -1,
+    tagChain: Double = 1.0,
+    tagScale: Double = 1.0,
+    /** A Wyrm skin is worn: its own moving picture instead of the beads (0: none). */
+    wyrmSkin: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val time = remember { mutableFloatStateOf(0f) }
+    // 30 drawings a second (OM, 2026-10-19: the preview was heavy): a gentle
+    // slither needs no more, and 256 beads are drawn half as often.
     LaunchedEffect(Unit) {
         val start = androidx.compose.runtime.withFrameNanos { it }
-        while (true) androidx.compose.runtime.withFrameNanos { time.floatValue = (it - start) / 1_000_000_000f }
+        var last = 0L
+        while (true) androidx.compose.runtime.withFrameNanos {
+            if (it - last >= 33_000_000L) {
+                last = it
+                time.floatValue = (it - start) / 1_000_000_000f
+            }
+        }
     }
     BoxWithConstraints(modifier.clipToBounds()) {
         val density = LocalDensity.current
@@ -88,7 +103,16 @@ internal fun SlitherStage(
         val pad = with(density) { 28.dp.toPx() }
         val wave = remember(w, h, topPx) { fitWave(pad, topPx, w - pad, h - with(density) { 14.dp.toPx() }) }
         Canvas(Modifier.fillMaxSize()) { drawFloor(floor, floorId, floorAlpha) }
-        if (textures == null) {
+        val worn = com.wyrm.omrajput.ui.WyrmSkins.byNumber(wyrmSkin)
+        if (worn != null) {
+            Box(Modifier.fillMaxSize().padding(top = top)) {
+                // Live, drawn by the arena's own skin code (2026-10-25); strip looks wear the snake's colour.
+                com.wyrm.omrajput.ui.WyrmSkinLive(
+                    wyrmSkin, textures?.wyrmSkins?.get(wyrmSkin), Modifier.fillMaxSize(),
+                    rgb = com.wyrm.omrajput.ui.slitherGroupRgb(skin.groups.firstOrNull { it >= 0 } ?: 0),
+                )
+            }
+        } else if (textures == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { IosSpinner(size = 20.dp, colour = Wyrm.Ink) }
         } else {
             Crossfade(targetState = skin, animationSpec = tween(220), label = "stage-skin") { shown ->
@@ -107,6 +131,14 @@ internal fun SlitherStage(
                         }) { drawSlither(textures, shown, wave, time) }
                     }
                 }
+            }
+            // The tag hangs from the head (not while the camera is on the face).
+            val tagItem = com.wyrm.omrajput.ui.SkinCatalog.tags.getOrNull(tag)
+            val tagImage = textures.tags[tag]
+            if (tagItem != null && tagImage != null && faceZoom < 0.02f) {
+                com.wyrm.omrajput.ui.SwingTag(
+                    tagItem, tagImage, Offset(wave.x1, wave.cy), wave.bead, w, h, tagChain, 1.0, tagScale,
+                )
             }
         }
     }

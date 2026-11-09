@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +72,9 @@ import com.wyrm.omrajput.ui.WyrmCapsule
 import com.wyrm.omrajput.ui.iosSpring
 import com.wyrm.omrajput.ui.wyrmRounded
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The arena UI pieces a player can place (Android's ArenaHudTarget: same ids,
@@ -120,12 +125,14 @@ private val percent: (Float) -> String = { "${(it * 100).roundToInt()}%" }
 private val pixels: (Float) -> String = { "${it.roundToInt()} px" }
 
 /** Android's and iOS's option lists, piece for piece (LayoutEditors.kt, WyrmSettingsPages.swift). */
-private fun options(piece: HudPiece): List<HudOption> = when (piece) {
+private fun options(piece: HudPiece, tab: Int = 0): List<HudOption> = when (piece) {
     HudPiece.MINIMAP -> listOf(EngineSlider("SIZE", "general.minimap_size", 128f..512f, 300f, shown = pixels))
     HudPiece.LEADERBOARD -> listOf(
         EngineSlider("TEXT SIZE", "general.lb_font", 0f..2f, 1f, steps = 1) {
             listOf("Small", "Medium", "Large")[it.roundToInt().coerceIn(0, 2)]
         },
+        TeamSlider("WIDTH", "lb_width", percent),
+        TeamSlider("HEIGHT", "lb_height", percent),
     )
     HudPiece.STATS -> listOf(
         EngineSlider("SIZE", "layout.stats_scale", 0.65f..1.60f, 1f, shown = percent),
@@ -150,9 +157,13 @@ private fun options(piece: HudPiece): List<HudOption> = when (piece) {
         TeamSlider("BACK", "chat_panel", percent),
         TeamSlider("WIDTH", "chat_width", pixels),
         TeamSlider("HEIGHT", "chat_height", pixels),
-        TeamColours("PLAYER NAME", "chat_name"),
-        TeamColours("MESSAGES", "chat_text"),
-    )
+    ) + when (tab) {
+        1 -> listOf(TeamColours("PLAYER NAME", "global_name"), TeamColours("MESSAGES", "global_text"))
+        2 -> listOf(TeamColours("PLAYER NAME", "online_name"), TeamColours("USERNAME AND SERVER", "online_data"))
+        3 -> listOf(TeamSlider("BUTTON SIZE", "chatbtn_scale", percent), TeamSlider("BUTTON OPACITY", "chatbtn_opacity", percent),
+            TeamColours("TEXT AND BORDER", "chatbtn_label"), TeamColours("FILL", "chatbtn_fill"))
+        else -> listOf(TeamColours("PLAYER NAME", "chat_name"), TeamColours("MESSAGES", "chat_text"))
+    }
 }
 
 /**
@@ -201,8 +212,8 @@ fun HudEditor() {
             Column(Modifier.padding(end = 18.dp)) {
                 Text("Drag the arena UI into place", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Wyrm.Ink)
                 Text(
-                    if (NearOriginalStore.on) "Near Original: the team and chat move · right-click for options"
-                    else "Right-click any piece for its size, opacity and more",
+                    if (NearOriginalStore.on) "Near Original: team and chat move · hold or right-click for options"
+                    else "Hold or right-click any piece for its size, opacity and more",
                     fontFamily = Wyrm.Body, fontSize = 12.sp, color = Wyrm.Mute,
                 )
             }
@@ -245,7 +256,8 @@ private fun pieceRect(piece: HudPiece, canvas: Offset, teamRects: FloatArray): R
     fun font(id: String) = listOf(0.84f, 1f, 1.18f)[EngineSettings.number(id, 1f).roundToInt().coerceIn(0, 2)]
     val size = when (piece) {
         HudPiece.MINIMAP -> EngineSettings.number("general.minimap_size", 300f).let { Offset(it, it) }
-        HudPiece.LEADERBOARD -> Offset(464f, 378f) * font("general.lb_font")
+        HudPiece.LEADERBOARD -> Offset(464f * TeamHudStore.value("lb_width"),
+            378f * (0.4f + 0.6f * TeamHudStore.value("lb_height"))) * font("general.lb_font")
         HudPiece.STATS -> Offset(330f, 342f) * (font("general.stats_font") * EngineSettings.number("layout.stats_scale", 1f))
         HudPiece.TEAM -> TeamHudStore.value("team_scale").let { Offset(TeamHudStore.value("team_width") * it, TeamHudStore.value("team_height") * it) }
         HudPiece.CHAT -> EngineSettings.number("layout.chat_scale", 1f).let { Offset(TeamHudStore.value("chat_width") * it, TeamHudStore.value("chat_height") * it) }
@@ -269,6 +281,9 @@ private fun pieceAt(at: Offset, canvas: Offset, teamRects: FloatArray): HudPiece
 
 @Composable
 private fun DirectHandles(canvas: Offset, teamRects: FloatArray, onOptions: (HudPiece) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var hold by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(Unit) { onDispose { hold?.cancel() } }
     var hover by remember { mutableStateOf<HudPiece?>(null) }
     var dragging by remember { mutableStateOf<HudPiece?>(null) }
     val move = remember { PointerIcon(java.awt.Cursor(java.awt.Cursor.MOVE_CURSOR)) }
@@ -284,12 +299,14 @@ private fun DirectHandles(canvas: Offset, teamRects: FloatArray, onOptions: (Hud
                     // Where the pointer caught the piece, from the piece's centre,
                     // so the piece moves with the pointer instead of jumping to it.
                     var grab = Offset.Zero
+                    var pressedAt = Offset.Zero
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull() ?: continue
                         val at = change.position
                         when (event.type) {
                             PointerEventType.Press -> {
+                                hold?.cancel()
                                 val piece = pieceAt(at, currentCanvas, rects) ?: continue
                                 change.consume()
                                 if (event.buttons.isSecondaryPressed) {
@@ -298,13 +315,21 @@ private fun DirectHandles(canvas: Offset, teamRects: FloatArray, onOptions: (Hud
                                     options(piece)
                                 } else if (event.buttons.isPrimaryPressed) {
                                     dragging = piece
+                                    pressedAt = at
                                     grab = at - pieceRect(piece, currentCanvas, rects).center
+                                    hold = scope.launch {
+                                        delay(viewConfiguration.longPressTimeoutMillis)
+                                        dragging = null
+                                        options(piece)
+                                    }
                                 }
                             }
                             PointerEventType.Move -> {
                                 val piece = dragging
                                 if (piece != null) {
                                     change.consume()
+                                    if ((at - pressedAt).getDistance() <= viewConfiguration.touchSlop && hold?.isActive == true) continue
+                                    hold?.cancel()
                                     val c = currentCanvas
                                     val centre = at - grab
                                     EngineSettings.writePair(
@@ -317,6 +342,7 @@ private fun DirectHandles(canvas: Offset, teamRects: FloatArray, onOptions: (Hud
                                 }
                             }
                             PointerEventType.Release -> {
+                                hold?.cancel()
                                 if (dragging != null) change.consume()
                                 dragging = null
                                 hover = pieceAt(at, currentCanvas, rects)
@@ -333,6 +359,9 @@ private fun DirectHandles(canvas: Offset, teamRects: FloatArray, onOptions: (Hud
 /** A piece's options, Android's EditorOptionsPopup for a mouse. Esc or Done closes it. */
 @Composable
 private fun PieceOptions(piece: HudPiece, onDone: () -> Unit) {
+    var tab by remember(piece) { mutableStateOf(0) }
+    DisposableEffect(piece) { onDispose { if (piece == HudPiece.CHAT) WyrmActivity.nativeSetChatTab(-1) } }
+    LaunchedEffect(piece, tab) { if (piece == HudPiece.CHAT) WyrmActivity.nativeSetChatTab(tab) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(piece) { runCatching { focus.requestFocus() } }
     Column(
@@ -350,7 +379,12 @@ private fun PieceOptions(piece: HudPiece, onDone: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(piece.title, fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.4.sp, color = Wyrm.Ink)
-        options(piece).forEach { option ->
+        if (piece == HudPiece.CHAT) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            listOf("Team", "Global", "Online", "Button").forEachIndexed { index, title ->
+                EditorPill(title, filled = tab == index) { tab = index }
+            }
+        }
+        options(piece, tab).forEach { option ->
             when (option) {
                 is EngineSlider -> {
                     var value by remember(piece, option.id) { mutableStateOf(EngineSettings.number(option.id, option.fallback)) }
@@ -383,13 +417,14 @@ private fun PieceOptions(piece: HudPiece, onDone: () -> Unit) {
                 }
                 is TeamColours -> {
                     var selected by remember(piece, option.key) { mutableStateOf(TeamHudStore.value(option.key).toInt()) }
-                    OptionHeader(option.label, TeamHudStore.COLOUR_NAMES.getOrElse(selected) { "Theme" })
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TeamHudStore.COLOUR_SWATCHES.forEachIndexed { index, swatch ->
+                    val swatches = TeamHudStore.COLOUR_SWATCHES + if (option.key == "chatbtn_fill") listOf(Color(0xFF808080)) else emptyList()
+                    OptionHeader(option.label, if (selected == 9) "Grey" else TeamHudStore.COLOUR_NAMES.getOrElse(selected) { "Theme" })
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        swatches.forEachIndexed { index, swatch ->
                             val fill = if (swatch == Color.Unspecified) Wyrm.Ink else swatch
                             Box(
                                 Modifier
-                                    .size(28.dp)
+                                    .size(27.dp)
                                     .border(if (index == selected) 2.dp else 1.dp, if (index == selected) Wyrm.Ink else Wyrm.Rule, CircleShape)
                                     .padding(3.dp)
                                     .clip(CircleShape)

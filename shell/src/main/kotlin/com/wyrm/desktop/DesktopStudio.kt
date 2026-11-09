@@ -197,8 +197,19 @@ private class StudioDraft {
             return if (mode == StudioMode.PHOTO && p != null) (p.width.toFloat() / p.height).coerceIn(0.5f, 2f) else 4f / 5f
         }
 
+    private data class Removed(val key: String, val line: StudioLine?, val words: StudioWords?, val sticker: StudioSticker?)
+    private val future = ArrayDeque<Removed>()
+    fun record(key: String) { future.clear(); history.add(key) }
+    fun redo() {
+        val item = future.removeLastOrNull() ?: return
+        item.line?.let { lines.add(it) }; item.words?.let { words.add(it) }; item.sticker?.let { stickers.add(it) }
+        history.add(item.key)
+    }
+    fun clearDrawing() { lines.clear(); history.removeAll { it.startsWith("line:") }; future.clear() }
     fun undo() {
         val last = history.removeLastOrNull() ?: return
+        future.add(Removed(last, if (last.startsWith("line:")) lines.lastOrNull() else null,
+            words.find { it.id == last }, stickers.find { it.id == last }))
         when {
             last.startsWith("line:") -> lines.removeLastOrNull()
             else -> {
@@ -437,7 +448,15 @@ private fun renderTrail(draft: StudioDraft): android.graphics.Bitmap {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DesktopTrailStudio(onClose: () -> Unit) {
-    val draft = remember { StudioDraft() }
+    var draft by remember { mutableStateOf(StudioDraft()) }
+    var clearAsking by remember { mutableStateOf(false) }
+    var drawingOnly by remember { mutableStateOf(false) }
+    EditorShortcuts(draft::undo, draft::redo, { drawingOnly = false; clearAsking = true })
+    if (clearAsking) com.wyrm.omrajput.ui.IosActionSheet(if (drawingOnly) "Clear this drawing?" else "Clear this trail?", listOf(
+        com.wyrm.omrajput.ui.IosSheetAction(if (drawingOnly) "Clear drawing" else "Clear trail", destructive = true) {
+            if (drawingOnly) draft.clearDrawing() else draft = StudioDraft()
+        }
+    ), 0.dp) { clearAsking = false }
     var tool by remember { mutableStateOf(StudioTool.CROP) }
     var brush by remember { mutableStateOf(Brush2.PEN) }
     var ink by remember { mutableIntStateOf(0xFFFFFF) }
@@ -525,7 +544,7 @@ internal fun DesktopTrailStudio(onClose: () -> Unit) {
                                 Text("PNG or JPG from this computer", fontFamily = Wyrm.Body, fontSize = 12.5.sp, color = Wyrm.Quiet)
                             }
                             else -> StudioComposition(draft, editing = true, tool = tool, brush = brush, ink = ink,
-                                width = 0f, onAddLine = { draft.history.add("line:" + it.hashCode()) })
+                                width = 0f, onAddLine = { draft.record("line:" + it.hashCode()) })
                         }
                     }
                 }
@@ -546,7 +565,7 @@ internal fun DesktopTrailStudio(onClose: () -> Unit) {
                                 StudioTool.LOOKS -> LooksPanel(draft)
                                 StudioTool.ADJUST -> AdjustPanel(draft)
                                 StudioTool.WORDS -> WordsPanel(draft, ink) { ink = it }
-                                StudioTool.DRAW -> DrawPanel(draft, brush, ink, { brush = it }, { ink = it })
+                                StudioTool.DRAW -> DrawPanel(draft, brush, ink, { brush = it }, { ink = it }, { drawingOnly = true; clearAsking = true })
                                 StudioTool.STICKERS -> StickersPanel(draft)
                             }
                         }
@@ -683,7 +702,7 @@ private fun WordsPanel(draft: StudioDraft, ink: Int, onInk: (Int) -> Unit) {
                         val item = StudioWords(text = typed.trim(), rgb = ink, serif = serif, filled = filled, glow = glow,
                             outline = outline, center = Offset(0.5f, 0.5f))
                         draft.words.add(item)
-                        draft.history.add(item.id)
+                        draft.record(item.id)
                         draft.selected = item.id
                     }
                 }
@@ -698,7 +717,7 @@ private fun WordsPanel(draft: StudioDraft, ink: Int, onInk: (Int) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DrawPanel(draft: StudioDraft, brush: Brush2, ink: Int, onBrush: (Brush2) -> Unit, onInk: (Int) -> Unit) {
+private fun DrawPanel(draft: StudioDraft, brush: Brush2, ink: Int, onBrush: (Brush2) -> Unit, onInk: (Int) -> Unit, clearDrawingRequest: () -> Unit) {
     Column {
         ToolLabel("Brush")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -709,7 +728,8 @@ private fun DrawPanel(draft: StudioDraft, brush: Brush2, ink: Int, onBrush: (Bru
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             StudioChip("Undo", false) { draft.undo() }
-            StudioChip("Clear drawing", false) { draft.lines.clear(); draft.history.removeAll { it.startsWith("line:") } }
+            StudioChip("Redo", false) { draft.redo() }
+            StudioChip("Clear drawing", false) { clearDrawingRequest() }
         }
         ToolNote("Draw on the picture with the mouse.")
     }
@@ -730,7 +750,7 @@ private fun StickersPanel(draft: StudioDraft) {
                         .hoverable(interaction).clickable(interactionSource = interaction, indication = null) {
                             val item = StudioSticker(emoji = emoji, center = Offset(0.5f, 0.42f))
                             draft.stickers.add(item)
-                            draft.history.add(item.id)
+                            draft.record(item.id)
                             draft.selected = item.id
                         },
                     contentAlignment = Alignment.Center,

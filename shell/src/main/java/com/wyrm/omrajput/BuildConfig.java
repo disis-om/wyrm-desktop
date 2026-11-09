@@ -13,7 +13,7 @@ public final class BuildConfig {
 
     public static final String VERSION_NAME;
     public static final int VERSION_CODE;
-    public static final String WYRM_API_URL = "https://wyrm-api.77-245-76-86.sslip.io";
+    public static final String WYRM_API_URL = "https://wyrm-api.165-99-223-123.sslip.io";
 
     static {
         Properties version = new Properties();

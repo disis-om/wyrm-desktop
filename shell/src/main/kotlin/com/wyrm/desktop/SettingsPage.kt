@@ -96,11 +96,10 @@ internal enum class SettingsPage(val group: String, val title: String, val sub: 
     MODES("Playing help", "Modes", "Normal, Assist, helper lines and arena colours", LucideR.drawable.lucide_ic_crosshair),
     BOT("Playing help", "Bot", "When it circles, how wide it swings", LucideR.drawable.lucide_ic_bot),
     FOOD("Food", "Food style", "Original, rings and geometric shapes", LucideR.drawable.lucide_ic_cookie),
-    PERFORMANCE("Performance", "Performance", "Frame rate, vsync, full screen", LucideR.drawable.lucide_ic_gauge),
     PROFILE("Account", "Profile", "Name, username, scores", LucideR.drawable.lucide_ic_user_round),
     NOTIFICATIONS("Account", "Notifications", "Which alerts reach you as Windows notifications", LucideR.drawable.lucide_ic_bell),
     PRIVACY("Account", "Privacy", "Your activity, and what is stored", LucideR.drawable.lucide_ic_shield),
-    THEMES("Accessibility", "Themes", "Paper, dark and colour appearances", LucideR.drawable.lucide_ic_palette),
+    THEMES("Accessibility", "Themes", "Light, dark and colour appearances", LucideR.drawable.lucide_ic_palette),
     VERSION("This computer", "Version", "Wyrm Desktop, its settings format and updates", LucideR.drawable.lucide_ic_info),
     HELP("Help", "Help & feedback", "Report a problem, ideas, your reports", LucideR.drawable.lucide_ic_circle_question_mark),
     ABOUT("About", "About Wyrm", "The story, the maker, and how to support", LucideR.drawable.lucide_ic_heart),
@@ -108,6 +107,17 @@ internal enum class SettingsPage(val group: String, val title: String, val sub: 
 
 /** The open page, kept for the run. */
 private var lastPage by mutableStateOf(SettingsPage.DISPLAY)
+
+internal object SettingsProfile {
+    var editing by mutableStateOf(false)
+    fun close() { Social.closeAll(); editing = false }
+}
+
+internal fun moveSettings(delta: Int) {
+    SettingsProfile.close()
+    val pages = SettingsPage.entries
+    lastPage = pages[(lastPage.ordinal + delta + pages.size) % pages.size]
+}
 
 /** Offscreen renders pick the page to show. */
 internal object SettingsPageShot {
@@ -122,6 +132,7 @@ fun SettingsPage() {
     val page = lastPage
     fun open(next: SettingsPage) {
         if (next == SettingsPage.HELP && lastPage != SettingsPage.HELP) HelpNav.page = HelpPage.MAIN
+        if (next != lastPage) SettingsProfile.close()
         lastPage = next
     }
 
@@ -145,7 +156,13 @@ fun SettingsPage() {
                         LocalSettingsEmbedded provides true,
                         com.wyrm.omrajput.ui.LocalTouchControls provides false,
                     ) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) { PageBody(shown) }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            val form = Social.top
+                            if (shown == SettingsPage.PROFILE && SettingsProfile.editing && form != null) {
+                                CompositionLocalProvider(com.wyrm.omrajput.ui.LocalPageChromeHidden provides false) { SocialPage(form) }
+                            }
+                            else PageBody(shown)
+                        }
                     }
                 }
             }
@@ -215,6 +232,8 @@ private fun PageBody(page: SettingsPage) {
             insetBottom = 0.dp,
             onBack = {},
             onTheme = EngineSettings::selectTheme,
+            mode = EngineSettings.themeMode,
+            onMode = EngineSettings::selectThemeMode,
             onIntensityChange = EngineSettings::applyThemeIntensity,
             onResetIntensity = { EngineSettings.applyThemeIntensity(0.5f) },
         )
@@ -230,47 +249,10 @@ private fun PageBody(page: SettingsPage) {
         SettingsPage.NOTIFICATIONS -> DesktopPage { NotificationsPage() }
         SettingsPage.HELP -> HelpPages()
         SettingsPage.CONTROLS -> DesktopPage { DesktopControlsPage() }
-        SettingsPage.PERFORMANCE -> DesktopPage {
-            val caps = listOf(60, 120, 144, 240, 0)
-            SettingsSectionLabel("Frame rate", top = 14.dp)
-            Box(Modifier.padding(horizontal = 16.dp)) {
-                PaperSegmented(
-                    options = caps.map { if (it == 0) "No limit" else "$it FPS" },
-                    selected = caps.indexOf(EngineSettings.fpsCap).coerceAtLeast(0),
-                    onSelect = { EngineSettings.setFramePolicy(cap = caps[it]) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Spacer(Modifier.height(14.dp))
-            SettingsCard {
-                SettingsBoolRow(
-                    title = "Vsync",
-                    detail = "Frames wait for the display: no tearing, a touch more delay",
-                    on = EngineSettings.vsync,
-                    first = true,
-                    onToggle = { EngineSettings.setFramePolicy(vsync = it) },
-                )
-            }
-            SettingsSectionLabel("Window")
-            SettingsCard {
-                SettingsBoolRow(
-                    title = "Full screen",
-                    detail = "F11 or Alt+Enter switches it anywhere in Wyrm",
-                    on = DesktopWindow.fullscreen,
-                    first = true,
-                    onToggle = { DesktopWindow.applyFullscreen(it) },
-                )
-            }
-        }
-        SettingsPage.PROFILE -> DesktopPage {
-            val player = Account.player
-            SettingsSectionLabel("Your Wyrm account", top = 14.dp)
-            SettingsCard {
-                SettingsValueRow("Name", player?.displayName.orEmpty(), first = true)
-                SettingsValueRow("Username", player?.handle.orEmpty(), first = false)
-                SettingsValueRow("Best score", grouped(player?.highestScore ?: 0), first = false)
-                SettingsValueRow("Kills", grouped(player?.kills ?: 0), first = false)
-            }
+        // The profile as the phones show it (OM, 2026-10-19), not a list of values.
+        SettingsPage.PROFILE -> {
+            LaunchedEffect(Unit) { Social.refreshProfile() }
+            OwnProfilePane()
         }
         SettingsPage.ABOUT -> DesktopPage { AboutPage() }
         SettingsPage.VERSION -> DesktopPage {
@@ -408,7 +390,6 @@ private fun NavigationList(page: SettingsPage, onOpen: (SettingsPage) -> Unit) {
 private fun navigationValue(entry: SettingsPage): String = when (entry) {
     SettingsPage.THEMES -> EngineSettings.theme.displayName
     SettingsPage.FOOD -> EngineSettings.settings.firstOrNull { it.id == "normal.food_type" }?.let { it.options.getOrNull(it.index) }.orEmpty()
-    SettingsPage.PERFORMANCE -> if (EngineSettings.fpsCap == 0) "No limit" else "${EngineSettings.fpsCap} FPS"
     SettingsPage.PROFILE -> Account.player?.handle.orEmpty()
     SettingsPage.HELP -> com.wyrm.omrajput.data.SupportStore.unseenReplies.let { if (it > 0) "$it new" else "" }
     else -> ""
@@ -491,7 +472,7 @@ private fun SearchResults(query: String, onOpen: (SettingsPage) -> Unit) {
 private fun pageOf(id: String, group: String): SettingsPage? = when {
     id.contains("food") -> SettingsPage.FOOD
     group == "general.bot" -> SettingsPage.BOT
-    group == "general" || group.startsWith("general.") -> if (id == "general.vsync") SettingsPage.PERFORMANCE else SettingsPage.DISPLAY
+    group == "general" || group.startsWith("general.") -> if (id == "general.vsync") null else SettingsPage.DISPLAY
     group == "normal" || group == "assist" || group.startsWith("normal.") || group.startsWith("assist.") -> SettingsPage.MODES
     else -> null
 }
@@ -518,15 +499,18 @@ private fun SearchHit(title: String, where: String, onClick: () -> Unit) {
 @Composable
 private fun DangerZone() {
     var confirmReset by remember { mutableStateOf(false) }
+    if (confirmReset) com.wyrm.omrajput.ui.IosActionSheet("Reset all settings?", listOf(
+        com.wyrm.omrajput.ui.IosSheetAction("Reset settings", destructive = true) { EngineSettings.resetAll() }
+    ), 0.dp) { confirmReset = false }
 
     Column(Modifier.padding(horizontal = 0.dp)) {
         SettingsCard {
             SettingsActionRow(
-                title = if (confirmReset) "Click again to reset everything" else "Reset everything to defaults",
+                title = "Reset everything to defaults",
                 first = true,
                 danger = true,
                 onClick = {
-                    if (confirmReset) { confirmReset = false; EngineSettings.resetAll() } else confirmReset = true
+                    confirmReset = true
                 },
             )
         }

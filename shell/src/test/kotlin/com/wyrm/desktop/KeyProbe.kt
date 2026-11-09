@@ -19,6 +19,16 @@ fun main() {
     Engine.start(1280, 800)
     waitUntil("engine settings", 60_000) { runCatching { WyrmActivity.nativeSettingsVersion() }.getOrNull().orEmpty().isNotBlank() }
     Thread.sleep(3_000)
+    // Exercise the rebuilt arena chat ABI without posting to any service.
+    WyrmActivity.nativeSetTeamChat("1\nFixture\tTeam fixture")
+    WyrmActivity.nativeSetGlobalChat("1\nFixture\tGlobal fixture")
+    WyrmActivity.nativeSetOnlinePlayers("Fixture\t@fixture · Arena fixture")
+    for (tab in 0..2) {
+        WyrmActivity.nativeSetChatTab(tab)
+        check(WyrmActivity.nativeChatTab() == tab) { "Arena chat tab did not round-trip" }
+    }
+    WyrmActivity.nativeSetChatTab(0)
+    println("Wyrm probe: TEAM/GLOBAL/ONLINE JNI setters and tab round-trip passed (synthetic content)")
     // The engine's whole settings table, for offscreen renders of the real
     // Settings pages (pageShot reads build/probe-settings.txt).
     java.io.File(System.getProperty("wyrm.probe.out", "build"), "probe-settings.txt").writeText(WyrmActivity.nativeSettingsSnapshot())

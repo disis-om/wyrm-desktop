@@ -252,7 +252,11 @@ object Engine {
     }
 
     /** The engine's title is up: its settings exist; send what the app keeps. */
-    @JvmStatic fun onTitleReady() = ui { EngineSettings.publishAll() }
+    @JvmStatic fun onTitleReady() = ui {
+        EngineSettings.publishAll()
+        // The custom arena id, this computer's own (sent to every arena, as Android).
+        com.wyrm.omrajput.data.CustomArenas.start(DesktopContext)
+    }
     @JvmStatic fun onHomeState(nickname: String?, arena: String?, score: Int, kills: Int) = ui {
         if (!nickname.isNullOrEmpty()) savedNickname = nickname
         if (!arena.isNullOrEmpty()) savedArena = arena

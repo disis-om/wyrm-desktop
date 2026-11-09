@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -93,6 +94,7 @@ fun WyrmApp() {
         when {
             Engine.failure != null -> Failure(Engine.failure!!)
             else -> AnimatedContent(
+                modifier = Modifier.blur(if (DesktopShortcuts.modal) 10.dp else 0.dp),
                 targetState = when {
                     Account.transitionTitle != null -> 8
                     gate == Gate.RESUMING -> 4
@@ -172,6 +174,16 @@ fun WyrmApp() {
             com.wyrm.omrajput.ui.CrashPromptHost(Account.repository, insetBottom = 24.dp, insetTop = 24.dp)
             if (gate == Gate.IN) com.wyrm.omrajput.ui.DropPromptHost(Account.repository, insetBottom = 24.dp, insetTop = 24.dp)
         }
+        // The developer's notice (OM, 2026-10-25), as Android: asked once per start, in the
+        // middle, never over a match, an editor or another prompt.
+        if (gate == Gate.IN) LaunchedEffect(Unit) { com.wyrm.omrajput.data.NoticeCenter.check(DesktopContext) }
+        if (
+            gate == Gate.IN && !inMatch && Account.transitionTitle == null &&
+            Engine.hudEditor == null && Engine.backgroundEditor == null &&
+            com.wyrm.omrajput.data.CrashWatch.prompt == null && !Account.logOutAsking
+        ) {
+            com.wyrm.omrajput.ui.NoticeHost()
+        }
     }
     // Presence follows the lobby opening and closing too.
     LaunchedEffect(HomeState.lobbyOpen) { DesktopLive.pushPresence() }
@@ -227,19 +239,22 @@ private fun Failure(message: String) {
 @Composable
 private fun Match() {
     // Leaving the match closes the team box (and gives the keys back).
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { DesktopTeam.closeComposer() } }
-    Box(Modifier.fillMaxSize()) {
-        GameSurface()
-        if (DesktopTeam.composerOpen) {
-            ArenaComposer(Modifier.align(Alignment.BottomCenter).padding(start = 24.dp, end = 24.dp, bottom = 40.dp))
+    // The chat window's GLOBAL and ONLINE tabs fill while the match is on.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        DesktopArenaFeed.start()
+        onDispose {
+            DesktopArenaFeed.stop()
+            DesktopTeam.closeComposer()
         }
-        Text(
-            if (DesktopTeam.canChatInArena) "Esc  leave   ·   Enter  team chat   ·   F11  full screen" else "Esc  leave   ·   F11  full screen",
-            fontFamily = Wyrm.Body,
-            fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.45f),
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+    }
+    Box(Modifier.fillMaxSize()) {
+        // Straight to the screen (DirectGameSurface): the engine draws the hint
+        // line itself, and the chat box is its own window over the game.
+        DirectGameSurface(
+            hint = if (DesktopTeam.canChatInArena) "Esc  leave   ·   Enter  chat   ·   F11  full screen" else "Esc  leave   ·   F11  full screen",
+            modifier = Modifier.fillMaxSize(),
         )
+        if (DesktopTeam.composerOpen) ArenaComposerWindow()
         // No death card: the engine never raises one (android_home.c
         // `raise_death_card` has no caller); after a death it returns to the
         // lobby, as on Android and iOS (OM, 2026-10-11).

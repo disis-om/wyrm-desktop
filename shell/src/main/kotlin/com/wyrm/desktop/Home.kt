@@ -50,6 +50,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -170,6 +172,7 @@ internal fun PlayPage() {
                 },
                 onNicknameDone = { if (Engine.started) WyrmActivity.nativeSetNickname(HomeState.nickname) },
                 onAlerts = { HomeState.alertsOpen = true },
+                onProfile = { Social.openProfile() },
             )
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Column(Modifier.weight(1f)) {
@@ -261,6 +264,7 @@ private fun HomeHeader(
     onNicknameChange: (String) -> Unit,
     onNicknameDone: () -> Unit,
     onAlerts: () -> Unit,
+    onProfile: () -> Unit,
 ) {
     var editing by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
@@ -327,6 +331,8 @@ private fun HomeHeader(
         }
         AlertsButton(unread, onAlerts)
         Spacer(Modifier.width(16.dp))
+        Row(Modifier.clip(wyrmRounded(11.dp)).pointerHoverIcon(PointerIcon.Hand).clickable(onClick = onProfile).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
         Column(horizontalAlignment = Alignment.End) {
             Text(name, fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Wyrm.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (handle.isNotBlank()) {
@@ -340,6 +346,7 @@ private fun HomeHeader(
             contentAlignment = Alignment.Center,
         ) {
             Text(initial, fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Wyrm.OnInk)
+        }
         }
     }
 }

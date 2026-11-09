@@ -15,7 +15,7 @@ SHELL = os.path.join(ROOT, "shell")
 SOURCES = [os.path.join(SHELL, "src", "main"), os.path.join(SHELL, "build", "shared-android")]
 REGISTRY = os.path.join(SHELL, "src", "main", "kotlin", "com", "wyrm", "desktop", "DesktopAccountSync.kt")
 
-NAME = r'"((?:wyrm|vlither)_[a-z0-9_]+)"'
+NAME = r'"(wyrm_[a-z0-9_]+)"'
 LITERAL = re.compile(r'getSharedPreferences\(\s*' + NAME)
 CONSTANT = re.compile(r'(?:const\s+val|val)\s+(PREFS[A-Z_]*|[A-Z_]*PREFS)\s*=\s*' + NAME)
 USES_CONSTANT = re.compile(r'getSharedPreferences\(\s*([A-Z_]+)\s*,')

@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
  * presence (DesktopLive), Help & feedback's store.
  */
 object Account {
-    val repository = WyrmRepository(DesktopContext, BuildConfig.WYRM_API_URL)
+    val repository = WyrmRepository(DesktopContext, BuildConfig.WYRM_API_URL, DesktopHttp::open)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     var player by mutableStateOf<ApiPlayer?>(null)

@@ -20,6 +20,21 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.swing.SwingUtilities
 
+/** A failed poll keeps its line; only acknowledgement of that line removes it. */
+internal class TeamOutbox {
+    var pending by mutableStateOf<String?>(null)
+        private set
+    fun queue(body: String): Boolean {
+        if (pending != null || body.isBlank()) return false
+        pending = body
+        return true
+    }
+    fun acknowledge(body: String?, success: Boolean) {
+        if (success && body != null && pending == body) pending = null
+    }
+    fun cancel(): String? = pending.also { pending = null }
+}
+
 /**
  * Team mode on the desktop (D2, OM 2026-10-11): Wyrm Android's team loop
  * (WyrmOverlay `startTeamPolling`, `pack`, `packTeamChat`, the outbox) around
@@ -37,7 +52,8 @@ internal object DesktopTeam {
     private val scope = CoroutineScope(SupervisorJob() + ui)
     private var service: TeamService? = null
     private var job: Job? = null
-    private var outbox: String? = null
+    private val outbox = TeamOutbox()
+    private var teamGeneration = 0L
     private var total = 0L
     private var packed = ""
 
@@ -56,6 +72,10 @@ internal object DesktopTeam {
     var draft by mutableStateOf("")
     var sending by mutableStateOf(false)
         private set
+    var sendError by mutableStateOf("")
+        private set
+    var composerTab by mutableIntStateOf(0)
+        private set
 
     /** The arena's message box is open (Enter in a match, or the chat window's box). */
     var composerOpen by mutableStateOf(false)
@@ -67,26 +87,48 @@ internal object DesktopTeam {
     /** Called once the engine is loaded (TeamVaultKey needs wyrm.dll for DPAPI). */
     fun start() {
         if (paused || job != null) return
-        service = runCatching { TeamService(DesktopContext) }.getOrNull() ?: return
+        service = runCatching { TeamService(DesktopContext,
+            java.util.UUID.randomUUID().toString().replace("-", "").take(8), escapeMessages = true) }.getOrNull() ?: return
         refreshTeams()
         // The arena's chat window shows the same list as the Team page.
         scope.launch {
             snapshotFlow { messages }.collect { list ->
-                runCatching { WyrmActivity.nativeSetTeamChat(packChat(list)) }
+                publishChat()
             }
         }
         job = scope.launch {
             while (isActive) {
                 val team = service
                 if (team != null && enabled && team.configured) {
-                    val presence = TeamPresence.parse(runCatching { WyrmActivity.nativeTeamPresence() }.getOrNull().orEmpty())
-                    val outgoing = outbox
-                    outbox = null
+                    val nativePresence = TeamPresence.parse(runCatching { WyrmActivity.nativeTeamPresence() }.getOrNull().orEmpty())
+                    val presence = nativePresence.copy(nickname = nativePresence.nickname.ifBlank {
+                        Engine.savedNickname.ifBlank { HomeState.nickname.ifBlank { "Wyrm Player" } }
+                    })
+                    val generation = teamGeneration
+                    val outgoing = outbox.pending
                     val next = runCatching { team.poll(presence, outgoing) }
                         .getOrElse { TeamState(configured = true, status = "Could not reach the team service") }
+                    if (generation != teamGeneration) continue
+                    if (outgoing != null) {
+                        if (next.messageAcknowledged && outgoing == outbox.pending) {
+                            outbox.acknowledge(outgoing, true)
+                            sending = false
+                            sendError = ""
+                            // The service may return the same log for two
+                            // consecutive identical messages. Keep both sends.
+                            if (next.messages.none { it.from == presence.nickname && it.text == outgoing }) {
+                                total++
+                                messages = (messages + TeamMessage(presence.nickname.ifBlank { "You" }, outgoing)).takeLast(200)
+                            }
+                        } else if (!next.connected) {
+                            sendError = "${next.status}. Your message is queued; retrying…"
+                        } else {
+                            sendError = "The team has not confirmed your message yet; retrying…"
+                        }
+                    }
                     // A failed poll keeps the last team: only a good one replaces it
                     // (Android's rule: one bad answer must not wipe the map).
-                    val updated = if (next.connected) next else state.copy(configured = true, status = next.status)
+                    val updated = if (next.connected) next else state.copy(configured = true, connected = false, status = next.status)
                     if (updated != state) state = updated
                     if (next.messages.isNotEmpty()) {
                         total += next.messages.size
@@ -96,7 +138,7 @@ internal object DesktopTeam {
                     // Every poll, not only on a change: a push made before the
                     // engine's team layer was up is dropped there, and an
                     // unchanged team would otherwise never be sent again.
-                    runCatching { WyrmActivity.nativeSetTeamChat(packChat(messages)) }
+                    publishChat()
                 } else if (state.configured) {
                     state = TeamState()
                     sendMembers("")
@@ -110,6 +152,7 @@ internal object DesktopTeam {
         enabled = on
         // Off leaves the map and the roster empty, not a stale team looking live.
         if (!on) {
+            cancelPending()
             state = TeamState()
             messages = emptyList()
             sendMembers("")
@@ -121,6 +164,7 @@ internal object DesktopTeam {
         val team = service ?: return "Team mode could not start on this computer."
         val problem = runCatching { team.addTeam(name, teamId, authKey) }.getOrElse { it.message ?: "The team could not be saved." }
         if (problem == null) {
+            cancelPending()
             adding = false
             messages = emptyList()
             sendMembers("")
@@ -135,6 +179,7 @@ internal object DesktopTeam {
 
     fun selectTeam(index: Int) {
         val team = service ?: return
+        cancelPending()
         team.selectTeam(index)
         messages = emptyList()
         state = TeamState(configured = true, status = "Connecting…")
@@ -145,6 +190,7 @@ internal object DesktopTeam {
 
     fun removeActiveTeam() {
         val team = service ?: return
+        cancelPending()
         team.removeTeam(active)
         messages = emptyList()
         state = TeamState()
@@ -157,24 +203,48 @@ internal object DesktopTeam {
      * a message rides with the next position report, so "Sending" until then
      * is the honest thing to show.
      */
-    fun send(text: String = draft) {
+    fun send(text: String = draft): Boolean {
         val body = text.trim().take(280)
-        if (body.isEmpty() || sending) return
-        outbox = body
+        if (body.isEmpty() || sending) return false
+        if (!running) { sendError = "Connect to a team first."; return false }
+        if (!outbox.queue(body)) return false
         draft = ""
         sending = true
-        scope.launch {
-            delay(TeamService.POLL_INTERVAL_MS)
-            sending = false
-        }
+        sendError = ""
+        publishChat()
+        return true
+    }
+
+    val pendingMessage: TeamMessage? get() = outbox.pending?.let {
+        TeamMessage("${Engine.savedNickname.ifBlank { "You" }} · sending…", it)
+    }
+
+    private fun publishChat() {
+        val shown = messages + listOfNotNull(pendingMessage)
+        runCatching { WyrmActivity.nativeSetTeamChat(packChat(shown)) }
+    }
+
+    private fun cancelPending() {
+        teamGeneration++
+        outbox.cancel()?.let { draft = it }
+        sending = false
+        sendError = ""
+    }
+
+    fun switchComposerTab() {
+        composerTab = if (composerTab == 0) 1 else 0
+        WyrmActivity.nativeSetChatTab(composerTab)
     }
 
     /** In a match, Enter opens the arena's message box (online, with a team). */
     val canChatInArena: Boolean
-        get() = running && !Engine.inAiArena && Engine.screen == Engine.SCREEN_PLAYING
+        get() = (running || Account.hasSession) && !Engine.inAiArena && Engine.screen == Engine.SCREEN_PLAYING
 
     fun openComposer() {
         if (composerOpen) return
+        composerTab = runCatching { WyrmActivity.nativeChatTab() }.getOrDefault(0)
+            .let { if (it == 2 || !running) 1 else it }
+        WyrmActivity.nativeSetChatTab(composerTab)
         GameKeys.releaseAll()
         GameKeys.typing = true
         composerOpen = true
@@ -192,7 +262,8 @@ internal object DesktopTeam {
     @JvmStatic
     fun onEngineChat(open: Boolean) = SwingUtilities.invokeLater {
         if (open) {
-            if (running) openComposer() else runCatching { WyrmActivity.nativeCloseTeamChat(0f) }
+            // GLOBAL needs no team (OM, 2026-10-19), only an account.
+            if (running || Account.hasSession) openComposer() else runCatching { WyrmActivity.nativeCloseTeamChat(0f) }
         } else if (composerOpen) {
             composerOpen = false
             GameKeys.typing = false
@@ -228,9 +299,7 @@ internal object DesktopTeam {
      * are left out by name, which is all the service knows you by.
      */
     private fun pack(state: TeamState, myArena: String): String {
-        val me = Engine.savedNickname.trim()
         return state.members
-            .filterNot { it.name.equals(me, ignoreCase = true) }
             .joinToString("\n") { member ->
                 val present = member.playing && member.arena == myArena
                 listOf(
@@ -238,7 +307,7 @@ internal object DesktopTeam {
                     member.x, member.y, member.score, member.rank,
                     if (member.bot) 1 else 0,
                     if (present) 1 else 0,
-                    0, -1,
+                    member.snakeId, -1,
                     member.owner.replace('\t', ' ').replace('\n', ' '),
                     if (member.playing) member.arena.replace('\t', ' ').replace('\n', ' ') else "",
                 ).joinToString("\t")

@@ -35,21 +35,21 @@ internal data class TrailClip(val file: java.io.File, val durationMs: Long, val 
     val aspect: Float get() = if (width > 0 && height > 0) width.toFloat() / height else 9f / 16f
 }
 
+/** Android's cut of a clip (TrailTimeline.kt). Never made on the desktop: video posting is off. */
+internal class TrailEditSpec private constructor(val clip: TrailClip)
+
 internal object TrailVideoExport {
     @Suppress("UNUSED_PARAMETER")
     suspend fun export(
         context: android.content.Context,
-        clip: TrailClip,
-        startMs: Long,
-        endMs: Long,
-        muted: Boolean,
+        spec: TrailEditSpec,
         look: List<androidx.media3.common.Effect>,
         overlay: (Int, Int) -> android.graphics.Bitmap?,
         progress: (Float) -> Unit,
     ): java.io.File = throw java.io.IOException("Video trails are not on the desktop yet.")
 
     @Suppress("UNUSED_PARAMETER")
-    fun poster(context: android.content.Context, clip: TrailClip, atMs: Long, filter: Any?, overlay: (Int, Int) -> android.graphics.Bitmap?): android.graphics.Bitmap? = null
+    fun poster(context: android.content.Context, spec: TrailEditSpec, filter: Any?, overlay: (Int, Int) -> android.graphics.Bitmap?): android.graphics.Bitmap? = null
 }
 
 /** Android's single feed player. Nothing plays on the desktop; the feed's bookkeeping stays. */

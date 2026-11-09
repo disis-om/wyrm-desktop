@@ -47,6 +47,7 @@ internal object DesktopLive {
     private var loop: Job? = null
     private var runJob: Job? = null
     private var runBatchSupported = true
+    private var nextRunAttemptAt = 0L
 
     /** Wyrm's window is the one in front. */
     var windowFocused by mutableStateOf(true)
@@ -70,6 +71,7 @@ internal object DesktopLive {
         running = true
         lastInputAt = System.currentTimeMillis()
         idle = false
+        nextRunAttemptAt = 0L
         pushPresence()
         inbox.start()
         flushRuns()
@@ -85,6 +87,8 @@ internal object DesktopLive {
                     pushPresence()
                 }
                 if (HomeState.alertsOpen) Account.refreshNotifications()
+                // Failed receipts retry even if no further match ends.
+                if (tick % 4 == 0) flushRuns()
             }
         }
     }
@@ -93,6 +97,8 @@ internal object DesktopLive {
     fun stop() {
         running = false
         loop?.cancel()
+        runJob?.cancel()
+        runJob = null
         inbox.stop()
     }
 
@@ -200,7 +206,7 @@ internal object DesktopLive {
     /** Android's flushPendingRuns: in order, 25 a request, three short retries, then left for later. */
     private fun flushRuns() {
         val me = Account.player?.id ?: return
-        if (!Account.hasSession || runJob?.isActive == true) return
+        if (!Account.hasSession || runJob?.isActive == true || System.currentTimeMillis() < nextRunAttemptAt) return
         runJob = scope.launch {
             var failures = 0
             var counted = false
@@ -211,7 +217,10 @@ internal object DesktopLive {
                 val result = runCatching { sendRuns(chunk) }
                 if (result.isFailure) {
                     val error = result.exceptionOrNull()!!
-                    if (Account.repository.isUnauthorized(error) || ++failures >= 3) { stopped = true; break }
+                    if (Account.repository.isUnauthorized(error) || ++failures >= 3) {
+                        nextRunAttemptAt = System.currentTimeMillis() + Account.repository.retryDelayMs(error, 60_000L)
+                        stopped = true; break
+                    }
                     delay(Account.repository.retryDelayMs(error, 5_000L * failures) + (0L..2_000L).random())
                     continue
                 }

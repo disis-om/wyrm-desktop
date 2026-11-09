@@ -10,14 +10,17 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -57,6 +60,7 @@ fun GameSurface(modifier: Modifier = Modifier, gameKeys: Boolean = true) {
     var tick by remember { mutableIntStateOf(0) }
     val focus = remember { FocusRequester() }
     val held = remember { HeldInput() }
+    var pointer by remember { mutableStateOf<Offset?>(null) }
     val windowFocused = LocalWindowInfo.current.isWindowFocused
 
     LaunchedEffect(Unit) {
@@ -68,7 +72,7 @@ fun GameSurface(modifier: Modifier = Modifier, gameKeys: Boolean = true) {
     LaunchedEffect(Unit) { focus.requestFocus() }
     // Alt-Tab or a click on another window: no key or button stays down
     // (a boost would otherwise run on until the key is pressed again).
-    LaunchedEffect(windowFocused) { if (!windowFocused) { held.releaseAll(); GameKeys.releaseAll() } }
+    LaunchedEffect(windowFocused) { if (!windowFocused) { pointer = null; held.releaseAll(); GameKeys.releaseAll() } }
     DisposableEffect(Unit) { onDispose { held.releaseAll(); GameKeys.releaseAll() } }
 
     Box(
@@ -82,6 +86,7 @@ fun GameSurface(modifier: Modifier = Modifier, gameKeys: Boolean = true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull() ?: continue
                         val p = change.position
+                        pointer = if (event.type == PointerEventType.Exit) null else p
                         when (event.type) {
                             PointerEventType.Move, PointerEventType.Enter ->
                                 WyrmActivity.nativeDesktopPointer(0, p.x, p.y, 0, 0f)
@@ -125,6 +130,16 @@ fun GameSurface(modifier: Modifier = Modifier, gameKeys: Boolean = true) {
                     null,
                     true,
                 )
+            }
+            val end = pointer
+            val laser = frames.laser
+            if (end != null && windowFocused && laser.size == 10 && (laser[9] > 0f || DesktopCursors.laserInNormal) && laser[5] > 0f && laser[7] > 0f && laser[8] > 0f) {
+                val sx = size.width / laser[7]
+                val sy = size.height / laser[8]
+                clipRect {
+                    drawLine(Color(laser[2].coerceIn(0f, 1f), laser[3].coerceIn(0f, 1f), laser[4].coerceIn(0f, 1f), laser[5].coerceIn(0f, 1f)),
+                        Offset(laser[0] * sx, laser[1] * sy), end, strokeWidth = laser[6] * minOf(sx, sy))
+                }
             }
         }
     }
@@ -177,6 +192,8 @@ internal fun sdlScancode(vk: Int): Int? = when (vk) {
 
 /** Pulls the newest engine frame into a Skia image (one copy each way). */
 private class FrameReader {
+    var laser: FloatArray = FloatArray(10)
+        private set
     private var buffer = ByteArray(0)
     private var seq = -1L
     var image: Image? = null
@@ -204,6 +221,7 @@ private class FrameReader {
         val made = Image.makeRaster(info, buffer, width * 4)
         image?.close()
         image = made
+        laser = WyrmActivity.nativeDesktopLaser()
         seq = next
         return true
     }

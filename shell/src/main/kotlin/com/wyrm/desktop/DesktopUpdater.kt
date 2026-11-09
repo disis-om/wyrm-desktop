@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.wyrm.omrajput.ui.centredDialogKeys
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -328,7 +329,9 @@ internal fun UpdateCardHost(exit: () -> Unit) {
         val shown = offer ?: return@AnimatedVisibility
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.42f))
-                .clickable(remember { MutableInteractionSource() }, null) {},
+                .clickable(remember { MutableInteractionSource() }, null) {
+                    if (!shown.mandatory && DesktopUpdater.state !is DesktopUpdater.State.Downloading && DesktopUpdater.state != DesktopUpdater.State.Starting) DesktopUpdater.later()
+                },
             contentAlignment = Alignment.Center,
         ) {
             AnimatedVisibility(visible = true, enter = scaleIn(tween(240), initialScale = 0.95f), exit = scaleOut()) {
@@ -342,7 +345,12 @@ internal fun UpdateCardHost(exit: () -> Unit) {
 private fun UpdateCard(offer: DesktopUpdater.Manifest, exit: () -> Unit) {
     val state = DesktopUpdater.state
     Column(
-        Modifier.width(440.dp).clip(wyrmRounded(24.dp)).background(Wyrm.Paper).border(1.dp, Wyrm.Rule, wyrmRounded(24.dp)).padding(28.dp),
+        Modifier.width(440.dp).clip(wyrmRounded(24.dp)).background(Wyrm.Paper).border(1.dp, Wyrm.Rule, wyrmRounded(24.dp))
+            .clickable(remember { MutableInteractionSource() }, null) {}
+            .centredDialogKeys(
+                onDismiss = { if (!offer.mandatory && state !is DesktopUpdater.State.Downloading && state != DesktopUpdater.State.Starting) DesktopUpdater.later() },
+                onConfirm = { if (state !is DesktopUpdater.State.Downloading && state != DesktopUpdater.State.Starting) DesktopUpdater.installNow(exit) },
+            ).padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         WyrmBrandMark(size = 64.dp)

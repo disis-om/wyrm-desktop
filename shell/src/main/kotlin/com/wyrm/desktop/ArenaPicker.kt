@@ -79,7 +79,7 @@ private fun Arena.title(): String = if (id < 0) "Custom arena" else "Arena ${cod
 /** A saved or typed address as an arena row; a missing port is Slither's 444 (Android's customArena). */
 private fun customArena(raw: String): Arena? {
     val trimmed = raw.trim()
-    val withPort = if (trimmed.contains(':')) trimmed else "$trimmed:444"
+    val withPort = ArenaDirectory.withDefaultPort(trimmed)
     if (!ArenaDirectory.isValidEndpoint(withPort)) return null
     val address = withPort.substringBeforeLast(':')
     val port = withPort.substringAfterLast(':').toIntOrNull() ?: return null
@@ -255,7 +255,7 @@ internal fun ArenaPicker(onClose: () -> Unit) {
                                 Modifier.fillMaxWidth().clip(wyrmRounded(14.dp)).background(Wyrm.Card).border(1.dp, Wyrm.Rule, wyrmRounded(14.dp)).padding(14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                PickerField(customAddress, { customAddress = it; addressError = false }, "IPv4 address:port", Modifier.weight(1f), autofocus = true, onEnter = ::saveCustom)
+                                PickerField(customAddress, { customAddress = it; addressError = false }, "IP address:port", Modifier.weight(1f), autofocus = true, onEnter = ::saveCustom)
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     "Save", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Wyrm.Link,
@@ -263,7 +263,7 @@ internal fun ArenaPicker(onClose: () -> Unit) {
                                 )
                             }
                             if (addressError) {
-                                Text("Enter a valid IPv4 address and port (1–65535).", fontFamily = Wyrm.Body, fontSize = 11.sp, color = Color(0xFFFF3B30))
+                                Text("Enter an IPv4 address or [IPv6] address and a port (1–65535).", fontFamily = Wyrm.Body, fontSize = 11.sp, color = Color(0xFFFF3B30))
                             }
                         }
                     }

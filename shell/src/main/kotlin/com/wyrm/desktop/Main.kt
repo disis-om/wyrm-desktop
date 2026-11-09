@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.wyrm.desktop
 
 import androidx.compose.ui.unit.DpSize
@@ -27,6 +29,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 
 fun main(args: Array<String>) {
     // The engine's files and Wyrm's dlls live in the app's own resources (D8):
@@ -139,12 +142,17 @@ private fun runApp() = application {
     // and sign-up stay that size; as soon as the account is in (the "Syncing
     // your Wyrm…" W, or the sign-in's own finish) it grows on all four sides to
     // the app's size; log out shrinks it back the same way.
+    // Already signed in (OM, 2026-10-19): the app's own size in the middle of
+    // the screen from the first frame, not the card growing into it.
+    val startBig = remember { !AppGate.signingIn }
     val state = rememberWindowState(
-        size = DpSize(SIGN_IN_W.dp, SIGN_IN_H.dp),
+        size = if (startBig) DpSize(APP_W.dp, APP_H.dp) else DpSize(SIGN_IN_W.dp, SIGN_IN_H.dp),
         position = WindowPosition(Alignment.Center),
     )
     val signingIn = AppGate.signingIn
     var open by remember { mutableStateOf(true) }
+    var acceptsFocus by remember { mutableStateOf(System.getenv("WYRM_BACKGROUND_START") != "1") }
+    LaunchedEffect(Unit) { if (!acceptsFocus) { kotlinx.coroutines.delay(1800); acceptsFocus = true } }
     val closeScope = androidx.compose.runtime.rememberCoroutineScope()
     // Closing: the window goes at once; the account's copy of the settings is
     // saved (at most 4 s), then the engine stops and Wyrm exits (D6).
@@ -164,6 +172,7 @@ private fun runApp() = application {
     Window(
         onCloseRequest = ::close,
         visible = open,
+        focusable = acceptsFocus,
         // Windows' own title bar is gone: Wyrm draws its strip (WindowChrome.kt).
         undecorated = true,
         state = state,
@@ -171,16 +180,18 @@ private fun runApp() = application {
         icon = remember { DesktopToasts.icon()?.let { androidx.compose.ui.graphics.painter.BitmapPainter(it.toComposeImageBitmap()) } },
         resizable = !signingIn,
         onPreviewKeyEvent = { event ->
-            val isToggle = event.key == Key.F11 || (event.isAltPressed && event.key == Key.Enter)
+            val isToggle = DesktopShortcuts.textSessions == 0 && !GameKeys.typing && !DesktopShortcuts.modal &&
+                (event.key == Key.F11 || (event.isAltPressed && event.key == Key.Enter))
             if (isToggle && event.type == KeyEventType.KeyDown) DesktopWindow.toggle()
             // In a match every other key goes to the game here, before focus.
-            isToggle || GameKeys.handle(event)
+            isToggle || DesktopShortcuts.handle(event) || GameKeys.handle(event)
         },
     ) {
         // Resizing: the window's own fill shows wherever Compose has not drawn the
         // new size yet. Paper there, not white or black (OM: flicker on resize).
         // Rounded corners (Windows 11) and Wyrm's icon at every size the taskbar asks for.
         LaunchedEffect(window) {
+            if (System.getenv("WYRM_BACKGROUND_START") == "1") window.isAutoRequestFocus = false
             WinApi.roundCorners(window.windowHandle)
             DesktopToasts.icon()?.let { big -> window.iconImages = WindowIcons.sizes(big) }
         }
@@ -191,6 +202,7 @@ private fun runApp() = application {
                 override fun windowGainedFocus(e: java.awt.event.WindowEvent) = DesktopLive.onWindowFocus(true)
                 override fun windowLostFocus(e: java.awt.event.WindowEvent) {
                     DesktopLive.onWindowFocus(false)
+                    DesktopShortcuts.onFocusLost()
                     // Android saves when the app goes to the background; here, when Wyrm loses focus.
                     closeScope.launch { DesktopAccountSync.save() }
                 }
@@ -207,14 +219,14 @@ private fun runApp() = application {
             window.rootPane.background = paper
             window.layeredPane.background = paper
         }
-        val grow = remember { Animatable(0f) }
+        val grow = remember { Animatable(if (startBig) 1f else 0f) }
         val placed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
         var grown by remember { mutableStateOf(false) }
         LaunchedEffect(signingIn) {
             if (placed.compareAndSet(false, true)) {
                 // First show: the card, in the middle of the screen.
                 applyWindowSize(window, state, grow.value, centreOnScreen = true)
-                kotlinx.coroutines.delay(260)
+                if (!startBig) kotlinx.coroutines.delay(260)
             }
             window.minimumSize = if (signingIn) java.awt.Dimension(SIGN_IN_W, SIGN_IN_H) else java.awt.Dimension(1000, 640)
             val target = if (signingIn) 0f else 1f
@@ -243,10 +255,27 @@ private fun runApp() = application {
         )
         LaunchedEffect(signingIn) { if (signingIn) WindowChrome.forget() }
         // The strip sits on the app's own paper: one seamless surface in every theme.
-        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().background(com.wyrm.omrajput.ui.Wyrm.Paper)) {
-            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().padding(top = stripSpace)) { WyrmApp() }
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().pointerHoverIcon(DesktopCursors.icon()).background(com.wyrm.omrajput.ui.Wyrm.Paper)) {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().padding(top = stripSpace)) {
+                // Sheets and prompts open in the middle, as a computer's dialogs (OM, 2026-10-19).
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.wyrm.omrajput.ui.LocalCentredDialogs provides true,
+                    com.wyrm.omrajput.ui.LocalDialogPresence provides DesktopShortcuts::modalChange,
+                    com.wyrm.omrajput.ui.LocalSearchShortcut provides DesktopShortcuts::registerSearch,
+                ) {
+                    androidx.compose.ui.platform.InterceptPlatformTextInput(interceptor = remember {
+                        androidx.compose.ui.platform.PlatformTextInputInterceptor { request, next ->
+                            DesktopShortcuts.textSessions++
+                            try { next.startInputMethod(request) } finally { DesktopShortcuts.textSessions-- }
+                        }
+                    }) { WyrmApp() }
+                }
+            }
             // A new version's card, over the app (never over the sign-in or a match).
-            if (!signingIn && !gameOwnsWindow) UpdateCardHost(exit = ::close)
+            if (!signingIn && !gameOwnsWindow) androidx.compose.runtime.CompositionLocalProvider(
+                com.wyrm.omrajput.ui.LocalCentredDialogs provides true,
+                com.wyrm.omrajput.ui.LocalDialogPresence provides DesktopShortcuts::modalChange,
+            ) { UpdateCardHost(exit = ::close) }
             TitleStripHost(visible = strip, frame = window, compact = signingIn, onClose = ::close)
             if (!signingIn && !DesktopWindow.fullscreen) ResizeEdges(window, minWidth = 1000, minHeight = 640)
         }

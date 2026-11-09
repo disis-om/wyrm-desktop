@@ -6,7 +6,10 @@ rem link name, copied into build\toolchain once) + CMake + Ninja.
 setlocal
 set "HERE=%~dp0"
 set "ROOT=%HERE%.."
+rem WYRM_NATIVE_OUT: the CMake/Ninja build folder on NTFS when the source is on
+rem the shared exFAT drive (CLAUDE.md, 2026-10-20); default build\native.
 set "OUT=%ROOT%\build\native"
+if defined WYRM_NATIVE_OUT set "OUT=%WYRM_NATIVE_OUT%"
 set "TOOLS=%ROOT%\build\toolchain"
 set "NDKBIN=%LOCALAPPDATA%\Android\Sdk\ndk\28.2.13676358\toolchains\llvm\prebuilt\windows-x86_64\bin"
 set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
