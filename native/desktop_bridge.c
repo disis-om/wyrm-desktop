@@ -1,7 +1,7 @@
 /*
  * Wyrm Desktop's side of the engine (wyrm.dll).
  *
- * The engine is Wyrm Android's, compiled with VLITHER_ANDROID (SDL3 + JNI) and
+ * The engine is Wyrm Android's, compiled with WYRM_SDL_JNI (SDL3 + JNI) and
  * WYRM_DESKTOP. Android's platform files talk to a Java class named
  * com.wyrm.omrajput.WyrmActivity through JNI; on a desktop that class is the
  * Compose app's Kotlin object of the same name, so those files work unchanged.
@@ -196,6 +196,17 @@ static uint8_t* frame_front;  /* Compose copies from here */
 static size_t frame_capacity;
 static int frame_w, frame_h, frame_bgra;
 static uint32_t frame_seq;
+/* Seven laser values, frame width/height and the Assist flag. The copied
+   snapshot belongs to the same frame as the snake head Compose displays. */
+static float laser_back[10], laser_front[10], laser_copied[10];
+
+void wyrm_desktop_laser(float x, float y, float r, float g, float b, float a,
+                       float thickness, int assist) {
+  laser_back[0] = x; laser_back[1] = y;
+  laser_back[2] = r; laser_back[3] = g; laser_back[4] = b;
+  laser_back[5] = a; laser_back[6] = thickness;
+  laser_back[9] = assist ? 1.0f : 0.0f;
+}
 
 void wyrm_desktop_publish_frame(const void* pixels, int width, int height,
                                 int stride, int bgra) {
@@ -226,13 +237,189 @@ void wyrm_desktop_publish_frame(const void* pixels, int width, int height,
   frame_w = width;
   frame_h = height;
   frame_bgra = bgra;
+  memcpy(laser_front, laser_back, sizeof(laser_front));
+  laser_front[7] = (float)width;
+  laser_front[8] = (float)height;
+  memset(laser_back, 0, sizeof(laser_back));
   frame_seq++;
   SDL_UnlockMutex(frame_lock);
+}
+
+/* ---- Direct presentation (OM, 2026-11-05) ----
+ *
+ * Root cause of the desktop's low and uneven frame rate: the engine drew into
+ * a hidden window and every frame went GPU -> host buffer (with a CPU wait on
+ * the frame's fence right after submit) -> native mailbox -> Java array ->
+ * a new Skia image -> back to the GPU, drawn on Compose's own clock. Nothing
+ * on screen came from the swapchain, so FIFO never paced against the monitor
+ * and the engine ran on a software cap read from the default monitor.
+ *
+ * In a match the shell now hosts a native AWT Canvas (a real child window of
+ * the Wyrm window, Compose's documented Swing interop). Its HWND comes from
+ * JAWT, the JDK's official native-window API; the engine's Vulkan surface is
+ * made on it with vkCreateWin32SurfaceKHR (Vulkan WSI), and every frame is
+ * presented straight to the screen through the DWM flip model, paced by the
+ * monitor's own refresh (FIFO). No readback, no fence wait, no copy, no
+ * second clock. Editors that draw Compose over the game (HUD layout, floor
+ * size) keep the hidden window and its readback: they are not gameplay.
+ *
+ * The hidden SDL window stays the engine's logical window (its size, events,
+ * ImGui); only the Vulkan surface moves. Switching is done on the engine
+ * thread between frames (twindow.c), and the shell waits for it before the
+ * canvas's HWND is destroyed.
+ */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_win32.h>
+#include <SDL3/SDL_vulkan.h>
+#include <jawt.h>
+#include <jawt_md.h>
+#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#include "cimgui/cimgui.h"
+
+static SDL_AtomicInt target_wanted_hi, target_wanted_lo;  /* requested HWND */
+static SDL_AtomicInt target_active_hi, target_active_lo;  /* HWND in use */
+static SDL_AtomicInt overlay_laser_normal, overlay_hover;
+static SDL_Mutex* hint_lock;
+static char hint_text[160];
+
+static void* atomic_ptr_get(SDL_AtomicInt* hi, SDL_AtomicInt* lo) {
+  uint64_t v = ((uint64_t)(uint32_t)SDL_GetAtomicInt(hi) << 32) |
+               (uint32_t)SDL_GetAtomicInt(lo);
+  return (void*)(uintptr_t)v;
+}
+static void atomic_ptr_set(SDL_AtomicInt* hi, SDL_AtomicInt* lo, void* p) {
+  uint64_t v = (uint64_t)(uintptr_t)p;
+  SDL_SetAtomicInt(lo, (int)(uint32_t)v);
+  SDL_SetAtomicInt(hi, (int)(uint32_t)(v >> 32));
+}
+
+/* Engine thread (twindow.c, tcontext.c, main.c, ui_overlay.c). */
+void* wyrm_desktop_target_wanted(void) {
+  return atomic_ptr_get(&target_wanted_hi, &target_wanted_lo);
+}
+void* wyrm_desktop_target_hwnd(void) {
+  return atomic_ptr_get(&target_active_hi, &target_active_lo);
+}
+void wyrm_desktop_target_set_active(void* hwnd) {
+  atomic_ptr_set(&target_active_hi, &target_active_lo, hwnd);
+}
+int wyrm_desktop_direct(void) { return wyrm_desktop_target_hwnd() != NULL; }
+int wyrm_desktop_laser_wanted(int assist) {
+  return SDL_GetAtomicInt(&overlay_hover) != 0 &&
+         (assist || SDL_GetAtomicInt(&overlay_laser_normal) != 0);
+}
+
+/* The Vulkan surface for the current target: the canvas (direct) or the
+   hidden SDL window (readback). */
+int wyrm_desktop_create_surface(void* sdl_window, void* instance_handle,
+                                void* surface_out) {
+  VkInstance instance = (VkInstance)instance_handle;
+  VkSurfaceKHR* surface = (VkSurfaceKHR*)surface_out;
+  HWND hwnd = (HWND)wyrm_desktop_target_hwnd();
+  if (!hwnd)
+    return SDL_Vulkan_CreateSurface((SDL_Window*)sdl_window, instance, NULL, surface);
+  PFN_vkCreateWin32SurfaceKHR create = (PFN_vkCreateWin32SurfaceKHR)
+      vkGetInstanceProcAddr(instance, "vkCreateWin32SurfaceKHR");
+  if (!create || !IsWindow(hwnd)) return false;
+  VkWin32SurfaceCreateInfoKHR info = {
+      .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+      .hinstance = GetModuleHandleW(NULL),
+      .hwnd = hwnd};
+  VkResult r = create(instance, &info, NULL, surface);
+  SDL_Log("Wyrm direct: Win32 surface on the game canvas = %d", (int)r);
+  return r == VK_SUCCESS;
+}
+
+/* The shell's hint line ("Esc leave · …"), drawn by the engine in a direct
+   match, since nothing of Compose's can be drawn over a native window. */
+void wyrm_desktop_draw_hint(void) {
+  if (!wyrm_desktop_direct() || !hint_lock) return;
+  char text[160];
+  SDL_LockMutex(hint_lock);
+  SDL_strlcpy(text, hint_text, sizeof(text));
+  SDL_UnlockMutex(hint_lock);
+  if (!text[0]) return;
+  ImGuiViewport* vp = igGetMainViewport();
+  ImDrawList* list = igGetForegroundDrawList_ViewportPtr(vp);
+  ImVec2 size;
+  igCalcTextSize(&size, text, NULL, false, -1.0f);
+  ImVec2 at = {vp->Pos.x + (vp->Size.x - size.x) * 0.5f,
+               vp->Pos.y + vp->Size.y - size.y - 10.0f};
+  ImDrawList_AddText_Vec2(list, at, 0x73FFFFFFu /* white, 45 % */, text, NULL);
 }
 
 /* ---- JNI: Compose -> engine ---- */
 
 #define DESKTOP_JNI(name) Java_com_wyrm_omrajput_WyrmActivity_##name
+
+/* The HWND of a displayable AWT Canvas, through JAWT (0 when unavailable).
+   The shell loads jawt first (System.loadLibrary("jawt")). */
+JNIEXPORT jlong JNICALL DESKTOP_JNI(nativeDesktopCanvasHwnd)(JNIEnv* env, jclass clazz,
+                                                             jobject canvas) {
+  (void)clazz;
+  if (!canvas) return 0;
+  HMODULE lib = GetModuleHandleW(L"jawt.dll");
+  if (!lib) lib = LoadLibraryW(L"jawt.dll");
+  if (!lib) return 0;
+  typedef jboolean(JNICALL * get_awt_fn)(JNIEnv*, JAWT*);
+  get_awt_fn get_awt = (get_awt_fn)GetProcAddress(lib, "JAWT_GetAWT");
+  if (!get_awt) return 0;
+  JAWT awt;
+  awt.version = JAWT_VERSION_9;
+  if (!get_awt(env, &awt)) return 0;
+  JAWT_DrawingSurface* ds = awt.GetDrawingSurface(env, canvas);
+  if (!ds) return 0;
+  jlong hwnd = 0;
+  jint lock = ds->Lock(ds);
+  if (!(lock & JAWT_LOCK_ERROR)) {
+    JAWT_DrawingSurfaceInfo* dsi = ds->GetDrawingSurfaceInfo(ds);
+    if (dsi) {
+      JAWT_Win32DrawingSurfaceInfo* win = (JAWT_Win32DrawingSurfaceInfo*)dsi->platformInfo;
+      if (win) hwnd = (jlong)(intptr_t)win->hwnd;
+      ds->FreeDrawingSurfaceInfo(dsi);
+    }
+    ds->Unlock(ds);
+  }
+  awt.FreeDrawingSurface(ds);
+  return hwnd;
+}
+
+/* Present to this HWND (0 = back to the hidden window and readback). Waits up
+   to two seconds for the engine thread to switch, so a canvas that is about
+   to be destroyed is no longer the swapchain's surface. True when switched. */
+JNIEXPORT jboolean JNICALL DESKTOP_JNI(nativeDesktopSetTarget)(JNIEnv* env, jclass clazz,
+                                                              jlong hwnd) {
+  (void)env;
+  (void)clazz;
+  void* want = (void*)(intptr_t)hwnd;
+  atomic_ptr_set(&target_wanted_hi, &target_wanted_lo, want);
+  for (int waited = 0; waited < 2000; ++waited) {
+    if (wyrm_desktop_target_hwnd() == want) return JNI_TRUE;
+    SDL_Delay(1);
+  }
+  SDL_Log("Wyrm direct: the engine did not switch surfaces in 2 s");
+  return JNI_FALSE;
+}
+
+/* The laser's two shell-side conditions (Normal-mode laser on; pointer over
+   the focused game) and the hint line, for a direct match. */
+JNIEXPORT void JNICALL DESKTOP_JNI(nativeDesktopOverlay)(JNIEnv* env, jclass clazz,
+                                                         jboolean laser_normal,
+                                                         jboolean hover, jstring hint) {
+  (void)clazz;
+  SDL_SetAtomicInt(&overlay_laser_normal, laser_normal ? 1 : 0);
+  SDL_SetAtomicInt(&overlay_hover, hover ? 1 : 0);
+  if (!hint_lock) hint_lock = SDL_CreateMutex();
+  const char* text = hint ? (*env)->GetStringUTFChars(env, hint, NULL) : NULL;
+  SDL_LockMutex(hint_lock);
+  SDL_strlcpy(hint_text, text ? text : "", sizeof(hint_text));
+  SDL_UnlockMutex(hint_lock);
+  if (text) (*env)->ReleaseStringUTFChars(env, hint, text);
+}
 
 JNIEXPORT jint JNICALL DESKTOP_JNI(nativeDesktopRun)(JNIEnv* env, jclass clazz,
                                                      jstring work_dir, jint width,
@@ -289,6 +476,7 @@ JNIEXPORT jlong JNICALL DESKTOP_JNI(nativeDesktopCopyFrame)(JNIEnv* env, jclass 
       void* target = (*env)->GetPrimitiveArrayCritical(env, dst, NULL);
       if (target) {
         memcpy(target, frame_front, bytes);
+        memcpy(laser_copied, laser_front, sizeof(laser_copied));
         (*env)->ReleasePrimitiveArrayCritical(env, dst, target, 0);
       }
     }
@@ -300,6 +488,18 @@ JNIEXPORT jlong JNICALL DESKTOP_JNI(nativeDesktopCopyFrame)(JNIEnv* env, jclass 
 
 static SDL_WindowID desktop_window_id(void) {
   return desktop_window ? SDL_GetWindowID(desktop_window) : 0;
+}
+
+JNIEXPORT jfloatArray JNICALL DESKTOP_JNI(nativeDesktopLaser)(JNIEnv* env, jclass clazz) {
+  (void)clazz;
+  if (!frame_lock) return NULL;
+  float values[10];
+  SDL_LockMutex(frame_lock);
+  memcpy(values, laser_copied, sizeof(values));
+  SDL_UnlockMutex(frame_lock);
+  jfloatArray result = (*env)->NewFloatArray(env, 10);
+  if (result) (*env)->SetFloatArrayRegion(env, result, 0, 10, values);
+  return result;
 }
 
 /* action: 0 move, 1 down, 2 up, 3 wheel. x, y in the game area's pixels. */

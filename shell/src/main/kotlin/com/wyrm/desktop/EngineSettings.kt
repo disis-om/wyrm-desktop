@@ -13,6 +13,7 @@ import com.wyrm.omrajput.data.SettingType
 import com.wyrm.omrajput.data.SettingsCodec
 import com.wyrm.omrajput.ui.Wyrm
 import com.wyrm.omrajput.ui.WyrmThemeId
+import com.wyrm.omrajput.ui.WyrmThemeMode
 import com.wyrm.omrajput.ui.formatSettingNumber
 import javax.swing.Timer
 
@@ -169,25 +170,51 @@ object EngineSettings {
     }
 
     // ---- Themes (Settings › Accessibility › Themes), Android's keys ----
+    //
+    // `fromStored` drops the light/dark side. Always `resolve(name, mode)` and
+    // write both keys. Desktop has no Windows night hook, so Auto stays on the
+    // light side until one exists. Not built from this change.
 
     private val ui by lazy { DesktopContext.getSharedPreferences("wyrm_ui_preferences", android.content.Context.MODE_PRIVATE) }
-    var theme by mutableStateOf(WyrmThemeId.fromStored(null))
+    var theme by mutableStateOf(WyrmThemeId.SAND)
+        private set
+    var themeMode by mutableStateOf(WyrmThemeId.SAND.defaultMode)
         private set
     var themeIntensity by mutableFloatStateOf(0.5f)
         private set
 
     /** At launch, before the first frame: the saved theme, as Android does in init. */
     fun loadTheme() {
-        theme = WyrmThemeId.fromStored(ui.getString("theme", null))
+        val choice = WyrmThemeId.resolve(ui.getString("theme", null), ui.getString("theme_mode", null))
+        theme = choice.theme
+        themeMode = choice.mode
         themeIntensity = ui.getFloat("theme_intensity", 0.5f).coerceIn(0f, 1f)
-        Wyrm.applyTheme(theme, themeIntensity)
+        Wyrm.applyTheme(theme, themeIntensity, themeMode)
+        ui.edit()
+            .putString("theme", theme.storedName)
+            .putString("theme_mode", themeMode.stored)
+            .apply()
     }
 
     fun selectTheme(next: WyrmThemeId) {
         if (next == theme) return
         theme = next
-        Wyrm.applyTheme(next, themeIntensity)
-        ui.edit().putString("theme", next.storedName).apply()
+        Wyrm.applyTheme(next, themeIntensity, themeMode)
+        ui.edit()
+            .putString("theme", next.storedName)
+            .putString("theme_mode", themeMode.stored)
+            .apply()
+        publishArenaTheme()
+    }
+
+    fun selectThemeMode(mode: WyrmThemeMode) {
+        if (mode == themeMode) return
+        themeMode = mode
+        Wyrm.applyTheme(theme, themeIntensity, mode)
+        ui.edit()
+            .putString("theme", theme.storedName)
+            .putString("theme_mode", mode.stored)
+            .apply()
         publishArenaTheme()
     }
 
@@ -195,7 +222,7 @@ object EngineSettings {
         val next = value.coerceIn(0f, 1f)
         if (kotlin.math.abs(next - themeIntensity) < 0.0001f) return
         themeIntensity = next
-        Wyrm.applyTheme(theme, next)
+        Wyrm.applyTheme(theme, next, themeMode)
         ui.edit().putFloat("theme_intensity", next).apply()
         publishArenaTheme()
     }
@@ -211,35 +238,54 @@ object EngineSettings {
                     p.onInk.toArgb(), p.quiet.toArgb(), p.mute.toArgb(),
                     p.rule.toArgb(), p.live.toArgb(), p.link.toArgb(),
                     p.well.toArgb(), p.track.toArgb(), p.badge.toArgb(),
+                    p.hero.bg.toArgb(), p.hero.on.toArgb(),
+                    p.hero2.bg.toArgb(), p.hero2.on.toArgb(),
                 ),
                 p.dark,
             )
         }
     }
 
-    // ---- Performance (this computer): frame cap and vsync ----
+    // ---- Performance (this computer): frame limit; vsync always ----
+    //
+    // Vsync is on always (OM, 2026-10-12, "same as the reference client"): FIFO, never
+    // IMMEDIATE. The engine draws into a hidden window whose presents do not
+    // wait for the monitor, so the engine's cap is the only clock here: the
+    // player's limit when it is below the monitor's refresh, else the
+    // monitor's refresh itself ("Display"). The old `vsync` key is not read.
 
     private val performance by lazy { DesktopContext.getSharedPreferences("wyrm_desktop_performance", android.content.Context.MODE_PRIVATE) }
-    /** 0 = no cap. */
-    var fpsCap by mutableIntStateOf(120)
-        private set
-    var vsync by mutableStateOf(true)
+    /** 0 = the monitor's own refresh rate. */
+    var fpsCap by mutableIntStateOf(0)
         private set
 
+    // Settings › Performance is gone (OM, 2026-10-19), as on the phones: Wyrm
+    // always draws at the monitor's own rate. An old saved limit is cleared.
     fun loadPerformance() {
-        fpsCap = performance.getInt("fps_cap", 120)
-        vsync = performance.getBoolean("vsync", true)
+        fpsCap = 0
+        if (performance.contains("fps_cap")) performance.edit().remove("fps_cap").apply()
     }
 
-    fun setFramePolicy(vsync: Boolean = this.vsync, cap: Int = fpsCap) {
-        this.vsync = vsync
+    fun setFramePolicy(cap: Int = fpsCap) {
         fpsCap = cap
-        performance.edit().putBoolean("vsync", vsync).putInt("fps_cap", cap).apply()
+        performance.edit().remove("vsync").putInt("fps_cap", cap).apply()
         publishFramePolicy()
     }
 
+    /** The refresh rate of the monitor Wyrm's window is on (2026-11-05: it was
+     *  always the default monitor's), 120 when Windows does not say. Only the
+     *  editors' readback path uses it as a cap; a direct match is paced by the
+     *  monitor itself (desktop_bridge.c "Direct presentation"). */
+    fun displayHz(): Int = runCatching {
+        val device = DesktopWindow.frame?.graphicsConfiguration?.device
+            ?: java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice
+        device.displayMode.refreshRate
+    }.getOrDefault(0).let { if (it > 0) it else 120 }
+
     fun publishFramePolicy() {
-        if (Engine.started) runCatching { WyrmActivity.nativeSetFramePolicy(vsync, fpsCap) }
+        val hz = displayHz()
+        val cap = if (fpsCap in 1 until hz) fpsCap else hz
+        if (Engine.started) runCatching { WyrmActivity.nativeSetFramePolicy(true, cap) }
     }
 
     /** Once the engine is up: everything the app keeps that the engine must know. */

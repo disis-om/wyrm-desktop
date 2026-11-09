@@ -1,9 +1,12 @@
 package com.wyrm.desktop
 
+import com.wyrm.omrajput.WyrmActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,155 +67,256 @@ import com.wyrm.omrajput.ui.Wyrm
 import com.wyrm.omrajput.ui.wyrmRounded
 
 /**
- * Home › Team mode on a computer (D2, OM 2026-10-11): Wyrm Android's Team
- * mode (TeamScreen / TeamIos: status, saved teams, connect form, live roster,
- * team chat) laid out for a window: the team on the left, the roster and the
- * chat side by side on the right. Same words and rules as the phones.
+ * Home › Team mode on a computer (OM, 2026-10-19). With no team: one card in
+ * the middle asks for the team's name, Team ID and Auth key. Connected: the
+ * roster on the left with everything the service says about each teammate,
+ * the team chat on the right, and a gear at the top right with what the
+ * phones keep in their menu (add a team, switch, disconnect, remove).
  */
 @Composable
 internal fun TeamPage(onBack: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    Column(
+    val running = DesktopTeam.running
+    val teams = DesktopTeam.teams
+    val state = DesktopTeam.state
+    Box(
         Modifier
             .fillMaxSize()
             .background(Wyrm.Paper)
             .focusRequester(focus)
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) { onBack(); true } else false
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    if (DesktopTeam.adding && teams.isNotEmpty()) DesktopTeam.adding = false else onBack()
+                    true
+                } else false
             }
             .focusable(),
     ) {
-        // Header: back, title, the line under it.
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 28.dp, top = 22.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Pill("‹  Play", filled = false, onClick = onBack)
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text("Team mode", fontFamily = Wyrm.Display, fontSize = 30.sp, color = Wyrm.Ink)
-                Text("Your NTL team: who is where, and the team chat. Esc goes back.", fontFamily = Wyrm.Body, fontSize = 13.sp, color = Wyrm.Mute)
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 24.dp, top = 22.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill("‹  Play", filled = false, onClick = onBack)
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (running) teams.getOrNull(DesktopTeam.active)?.name?.ifBlank { "Team mode" } ?: "Team mode" else "Team mode",
+                        fontFamily = Wyrm.Display, fontSize = 30.sp, color = Wyrm.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        when {
+                            DesktopTeam.paused -> "Team services are switched off in this build."
+                            !running && teams.isNotEmpty() -> "Disconnected. Your saved teams stay on this computer."
+                            !running -> "Connect your team to see who is where and talk to them."
+                            state.connected -> "${state.members.size} ${if (state.members.size == 1) "teammate" else "teammates"} online · Esc goes back"
+                            state.status.isNotBlank() && state.status != "Connected" -> state.status
+                            else -> "Joining your team…"
+                        },
+                        fontFamily = Wyrm.Body, fontSize = 13.sp, color = Wyrm.Mute,
+                    )
+                }
+                if (running) StatusChip(state.connected, state.status)
+                if (teams.isNotEmpty() && !DesktopTeam.paused) {
+                    Spacer(Modifier.width(10.dp))
+                    TeamGear()
+                }
+            }
+            when {
+                DesktopTeam.paused -> CentredNote("Team mode is paused", "Nothing is sent to or received from the team service in this build.")
+                teams.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { ConnectCard(canCancel = false) }
+                !running -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Reconnect() }
+                else -> Row(Modifier.fillMaxSize().padding(start = 4.dp, end = 12.dp, bottom = 18.dp)) {
+                    Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) { RosterColumn() }
+                    Column(Modifier.weight(1.15f).fillMaxHeight()) { ChatColumn() }
+                }
             }
         }
-        Row(Modifier.fillMaxSize().padding(bottom = 18.dp)) {
-            Column(Modifier.width(400.dp).fillMaxHeight().verticalScroll(rememberScrollState())) { TeamColumn() }
-            Row(Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp)) {
-                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState())) { RosterColumn() }
-                Column(Modifier.weight(1.1f).fillMaxHeight()) { ChatColumn() }
+        // Add a team over the page, in the middle (from the gear).
+        if (DesktopTeam.adding && teams.isNotEmpty()) {
+            Box(
+                Modifier.fillMaxSize().background(Wyrm.Ink.copy(alpha = 0.32f))
+                    .clickable(remember { MutableInteractionSource() }, indication = null) { DesktopTeam.adding = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(Modifier.clickable(remember { MutableInteractionSource() }, indication = null) {}) { ConnectCard(canCancel = true) }
             }
         }
     }
 }
 
 @Composable
-private fun TeamColumn() {
-    val running = DesktopTeam.running
-    val state = DesktopTeam.state
-    val teams = DesktopTeam.teams
-    if (DesktopTeam.paused) {
-        IosSectionLabel("Paused")
-        IosPaperCard {
-            IosListRow(
-                title = "Team mode is paused",
-                detail = "NTL services are switched off in this build: nothing is sent to or received from NTL. Your saved teams stay on this computer.",
-                showsChevron = false,
+private fun StatusChip(connected: Boolean, status: String) {
+    val live = connected
+    val label = when {
+        live -> "Live"
+        status.isNotBlank() && status != "Connected" -> "Offline"
+        else -> "Joining"
+    }
+    Row(
+        Modifier.clip(CircleShape).background(Wyrm.Well).padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (live) Wyrm.Live else if (label == "Offline") Wyrm.Badge else Wyrm.Quiet))
+        Text(label, fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Wyrm.Ink)
+    }
+}
+
+/** The gear: Android's team menu (add, switch, disconnect / connect, remove). */
+@Composable
+private fun TeamGear() {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        val hover = remember { MutableInteractionSource() }
+        Box(
+            Modifier.size(40.dp).clip(CircleShape).background(Wyrm.Well)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(hover, indication = null) { open = !open },
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.material3.Icon(
+                androidx.compose.ui.res.painterResource(com.composables.icons.lucide.R.drawable.lucide_ic_settings),
+                contentDescription = "Team settings", tint = Wyrm.Ink, modifier = Modifier.size(19.dp),
             )
         }
-        return
-    }
-    IosSectionLabel("Team mode")
-    IosPaperCard {
-        IosListRow(
-            title = if (running) teams.getOrNull(DesktopTeam.active)?.name?.ifBlank { "Team" } ?: "Team" else "No team connected",
-            detail = when {
-                !running -> if (teams.isNotEmpty()) "Pick a saved team below." else "Use the Auth and Team ID from your NTL Team."
-                state.connected -> "${state.members.size} members · NTL compatible"
-                state.status.isNotBlank() && state.status != "Connected" -> state.status
-                else -> "Joining your team"
-            },
-            value = when {
-                !running -> ""
-                state.connected -> "Live"
-                state.status.isNotBlank() && state.status != "Connected" -> "Offline"
-                else -> "Joining"
-            },
-            showsChevron = false,
-        )
-    }
-    if (teams.isNotEmpty()) {
-        Box(Modifier.padding(top = 10.dp)) {
-            IosPaperCard {
-                SettingsBoolRow(
-                    title = "Team mode",
-                    detail = "Teammates on your minimap and the team chat in the arena",
-                    on = DesktopTeam.enabled,
-                    first = true,
-                    onToggle = DesktopTeam::applyEnabled,
-                )
-            }
-        }
-        IosSectionLabel("Saved teams")
-        IosPaperCard {
-            teams.forEachIndexed { index, team ->
-                IosListRow(
-                    title = team.name.ifBlank { "Team ${index + 1}" },
-                    value = if (running && index == DesktopTeam.active) "✓" else "",
-                    showsChevron = false,
-                ) { DesktopTeam.selectTeam(index) }
-            }
-        }
-        Box(Modifier.padding(top = 10.dp)) {
-            IosPaperCard {
-                SettingsActionRow("Add another team", first = true) { DesktopTeam.adding = true }
-                if (running) SettingsActionRow("Remove this team", first = false, danger = true) { DesktopTeam.removeActiveTeam() }
+        if (open) {
+            androidx.compose.ui.window.Popup(
+                alignment = Alignment.TopEnd,
+                offset = androidx.compose.ui.unit.IntOffset(0, 120),
+                onDismissRequest = { open = false },
+                properties = androidx.compose.ui.window.PopupProperties(focusable = true),
+            ) {
+                Column(
+                    Modifier.width(280.dp).clip(wyrmRounded(18.dp)).background(Wyrm.Card)
+                        .border(1.dp, Wyrm.Rule, wyrmRounded(18.dp)).padding(vertical = 6.dp),
+                ) {
+                    val teams = DesktopTeam.teams
+                    MenuLabel("Your teams")
+                    teams.forEachIndexed { index, team ->
+                        MenuItem(team.name.ifBlank { "Team ${index + 1}" }, checked = DesktopTeam.running && index == DesktopTeam.active) {
+                            open = false
+                            if (!DesktopTeam.enabled) DesktopTeam.applyEnabled(true)
+                            DesktopTeam.selectTeam(index)
+                        }
+                    }
+                    MenuRule()
+                    MenuItem("Add a team") { open = false; DesktopTeam.adding = true }
+                    if (DesktopTeam.enabled) MenuItem("Disconnect") { open = false; DesktopTeam.applyEnabled(false) }
+                    else MenuItem("Connect") { open = false; DesktopTeam.applyEnabled(true) }
+                    if (DesktopTeam.running) {
+                        MenuRule()
+                        MenuItem("Remove this team", danger = true) { open = false; DesktopTeam.removeActiveTeam() }
+                    }
+                }
             }
         }
     }
-    if (teams.isEmpty() || DesktopTeam.adding) ConnectForm(canCancel = teams.isNotEmpty())
-    Spacer(Modifier.height(24.dp))
 }
 
-/** Android's TeamConnectPage, as a card: name, Team ID, Auth key, Connect. */
 @Composable
-private fun ConnectForm(canCancel: Boolean) {
+private fun MenuLabel(text: String) {
+    Text(text.uppercase(), fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 0.8.sp,
+        color = Wyrm.Quiet, modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp))
+}
+
+@Composable
+private fun MenuRule() {
+    Box(Modifier.fillMaxWidth().padding(vertical = 5.dp).height(1.dp).background(Wyrm.RowRule))
+}
+
+@Composable
+private fun MenuItem(label: String, checked: Boolean = false, danger: Boolean = false, onClick: () -> Unit) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp).clip(wyrmRounded(10.dp))
+            .background(if (hovered) Wyrm.Well else androidx.compose.ui.graphics.Color.Transparent)
+            .hoverable(hover)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .clickable(hover, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontFamily = Wyrm.Body, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+            color = if (danger) Wyrm.Badge else Wyrm.Ink, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (checked) Text("✓", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Wyrm.Live)
+    }
+}
+
+@Composable
+private fun CentredNote(title: String, body: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 460.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Wyrm.Ink)
+            Text(body, fontFamily = Wyrm.Body, fontSize = 14.sp, color = Wyrm.Mute, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+}
+
+/** Saved teams, Team mode off: connect again (or pick which one). */
+@Composable
+private fun Reconnect() {
+    Column(
+        Modifier.width(440.dp).clip(wyrmRounded(24.dp)).background(Wyrm.Card).border(1.dp, Wyrm.Rule, wyrmRounded(24.dp)).padding(26.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Team mode is off", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Wyrm.Ink)
+        Text("Pick a team to connect.", fontFamily = Wyrm.Body, fontSize = 13.5.sp, color = Wyrm.Mute)
+        DesktopTeam.teams.forEachIndexed { index, team ->
+            MenuItem(team.name.ifBlank { "Team ${index + 1}" }, checked = index == DesktopTeam.active) {
+                DesktopTeam.applyEnabled(true)
+                DesktopTeam.selectTeam(index)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("Connect", filled = true) { DesktopTeam.applyEnabled(true) }
+            Pill("Add a team", filled = false) { DesktopTeam.adding = true }
+        }
+    }
+}
+
+/** The team's name, Team ID and Auth key, in one card. */
+@Composable
+private fun ConnectCard(canCancel: Boolean) {
     var name by remember { mutableStateOf("") }
     var teamId by remember { mutableStateOf("") }
     var authKey by remember { mutableStateOf("") }
     var problem by remember { mutableStateOf<String?>(null) }
     val ready = teamId.trim().length >= 16 && authKey.trim().length >= 16
-    IosSectionLabel("Add a team")
-    IosPaperCard {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Paste what the team service gave you", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Wyrm.Ink)
-            Text(
-                "Team mode runs on the NTL service. The ID and key are kept on this computer only, sealed to your Windows account — they are never sent to Wyrm.",
-                fontFamily = Wyrm.Body, fontSize = 12.5.sp, color = Wyrm.Mute,
-            )
-            PaperField(name, { name = it.take(48) }, "Name it — only you see this")
-            PaperField(teamId, { teamId = it.take(2048) }, "Team ID · at least 16 characters")
-            PaperField(authKey, { authKey = it.take(2048) }, "Auth key · at least 16 characters", secret = true)
-            (problem ?: DesktopTeam.state.status.takeIf { it.isNotBlank() && !DesktopTeam.state.connected && DesktopTeam.teams.isEmpty() })?.let {
-                Text(it, fontFamily = Wyrm.Body, fontSize = 12.5.sp, color = Wyrm.Badge)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (canCancel) Pill("Cancel", filled = false) { DesktopTeam.adding = false }
-                Pill("Connect", filled = true, enabled = ready) {
-                    problem = DesktopTeam.addTeam(name.trim(), teamId.trim(), authKey.trim())
-                    if (problem == null) { name = ""; teamId = ""; authKey = "" }
-                }
-            }
+    Column(
+        Modifier.width(460.dp).clip(wyrmRounded(24.dp)).background(Wyrm.Card).border(1.dp, Wyrm.Rule, wyrmRounded(24.dp)).padding(26.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(if (canCancel) "Add a team" else "No team added yet", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 22.sp, color = Wyrm.Ink)
+        Text(
+            "Enter your team's name, Team ID and Auth key. They stay on this computer only, sealed to your Windows account.",
+            fontFamily = Wyrm.Body, fontSize = 13.sp, color = Wyrm.Mute,
+        )
+        PaperField(name, { name = it.take(48) }, "Team name (only you see it)")
+        PaperField(teamId, { teamId = it.take(2048) }, "Team ID")
+        PaperField(authKey, { authKey = it.take(2048) }, "Auth key", secret = true)
+        (problem ?: DesktopTeam.state.status.takeIf { it.isNotBlank() && !DesktopTeam.state.connected && DesktopTeam.teams.isEmpty() })?.let {
+            Text(it, fontFamily = Wyrm.Body, fontSize = 12.5.sp, color = Wyrm.Badge)
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("Connect", filled = true, enabled = ready) {
+                problem = DesktopTeam.addTeam(name.trim(), teamId.trim(), authKey.trim())
+                if (problem == null) { name = ""; teamId = ""; authKey = ""; DesktopTeam.adding = false }
+            }
+            if (canCancel) Pill("Cancel", filled = false) { DesktopTeam.adding = false }
+        }
+        Text("Team ID and Auth key are at least 16 characters each.", fontFamily = Wyrm.Body, fontSize = 11.5.sp, color = Wyrm.Quiet)
     }
-    SettingsCaption("No team yet? A team ID comes from whoever runs your squad's NTL server.")
 }
 
 @Composable
 private fun RosterColumn() {
     val state = DesktopTeam.state
-    IosSectionLabel("Live roster")
-    if (!DesktopTeam.running || state.members.isEmpty()) {
+    IosSectionLabel("Roster")
+    if (state.members.isEmpty()) {
         IosPaperCard {
             IosListRow(
-                title = if (DesktopTeam.running) "Nobody online yet" else "No team connected",
-                detail = if (DesktopTeam.running) "Teammates appear here, and on your minimap, as they play." else "Add a team to see who is where.",
+                title = "Nobody online yet",
+                detail = "Teammates appear here, and on your minimap, as they play.",
                 showsChevron = false,
             )
         }
@@ -249,15 +353,18 @@ private fun RosterRow(member: TeamMember, sameArena: Boolean, onClick: () -> Uni
             Text(
                 listOfNotNull(
                     member.owner.takeIf { it.isNotBlank() }?.let { "Key $it" },
-                    if (member.playing) member.arena else "In menu",
+                    if (member.playing) "Arena ${member.arena}" else "In the menu",
+                    member.version.takeIf { it.isNotBlank() }?.let { "v$it" },
+                    "bot".takeIf { member.bot },
                 ).joinToString(" · "),
                 fontFamily = Wyrm.Body, fontSize = 11.sp, color = Wyrm.Quiet, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            if (member.playing && member.score > 0) Stat("%,d".format(member.score))
             member.fps?.let { Stat("$it fps") }
             member.ping?.let { Stat("$it ms") }
-            if (member.rank > 0) Stat("LB #${member.rank}", strong = true)
+            if (member.rank > 0) Stat("#${member.rank}", strong = true)
         }
     }
 }
@@ -276,7 +383,7 @@ private fun Stat(text: String, strong: Boolean = false) {
 /** Team chat: the transcript, newest at the bottom, and the box under it. */
 @Composable
 private fun androidx.compose.foundation.layout.ColumnScope.ChatColumn() {
-    val messages = DesktopTeam.messages
+    val messages = DesktopTeam.messages + listOfNotNull(DesktopTeam.pendingMessage)
     val me = Engine.savedNickname.trim()
     val list = rememberLazyListState()
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) list.animateScrollToItem(messages.lastIndex) }
@@ -323,6 +430,7 @@ private fun androidx.compose.foundation.layout.ColumnScope.ChatColumn() {
         }
     }
     SettingsCaption("A message goes out with the next team update, within four seconds.")
+    if (DesktopTeam.sendError.isNotBlank()) SettingsCaption(DesktopTeam.sendError)
 }
 
 /**
@@ -334,34 +442,77 @@ private fun androidx.compose.foundation.layout.ColumnScope.ChatColumn() {
 internal fun ArenaComposer(modifier: Modifier = Modifier) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    // The box writes to the tab the chat window shows: GLOBAL goes to Wyrm's
+    // global chat, TEAM to the team (no team: global).
+    val global = DesktopTeam.composerTab == 1
+    val busy = if (global) DesktopArenaFeed.sending else DesktopTeam.sending
+    val submit = {
+        if (global) {
+            DesktopArenaFeed.send(DesktopTeam.draft) { ok ->
+                if (ok) { DesktopTeam.draft = ""; DesktopTeam.closeComposer() }
+            }
+        } else if (DesktopTeam.send()) DesktopTeam.closeComposer()
+    }
+    Column(modifier.widthIn(max = 620.dp)) {
+    val error = if (global) DesktopArenaFeed.error else DesktopTeam.sendError
+    if (error.isNotBlank()) Text(error, fontFamily = Wyrm.Body, color = Wyrm.Badge, modifier = Modifier.padding(12.dp))
     Row(
-        modifier
+        Modifier
             .widthIn(max = 620.dp)
             .fillMaxWidth()
             .paperPanel(wyrmRounded(22.dp), fill = 0.95f)
             .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("TEAM", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 10.5.sp, color = Wyrm.Live)
+        Text(if (global) "GLOBAL" else "TEAM", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 10.5.sp, color = Wyrm.Live)
         Spacer(Modifier.width(12.dp))
         Box(Modifier.weight(1f)) {
             PaperField(
                 value = DesktopTeam.draft,
                 onChange = { DesktopTeam.draft = it.replace("\n", "").take(280) },
-                hint = "Message the team · Enter sends · Esc closes",
+                hint = if (global) "Message everyone · Enter sends · Esc closes" else "Message the team · Enter sends · Esc closes",
                 modifier = Modifier.focusRequester(focus),
-                onEnter = {
-                    DesktopTeam.send()
-                    DesktopTeam.closeComposer()
-                },
+                onEnter = { submit() },
                 onEscape = { DesktopTeam.closeComposer() },
+                onTab = { DesktopTeam.switchComposerTab() },
                 framed = false,
             )
         }
         Spacer(Modifier.width(8.dp))
-        Pill("Send", filled = true, enabled = DesktopTeam.draft.isNotBlank()) {
-            DesktopTeam.send()
-            DesktopTeam.closeComposer()
+        Pill(if (busy) "Sending…" else "Send", filled = true, enabled = DesktopTeam.draft.isNotBlank() && !busy) { submit() }
+    }
+    }
+}
+
+/**
+ * The chat box over a direct match (2026-11-05): the game is a native window
+ * (DirectGameSurface), which Compose cannot draw over, so the box is its own
+ * small borderless, see-through window owned by Wyrm's, at the same place
+ * (bottom centre, 40 dp up, at most 620 dp wide). Esc or Send closes it.
+ */
+@Composable
+internal fun ArenaComposerWindow() {
+    val frame = DesktopWindow.frame ?: return
+    val bounds = frame.bounds
+    val width = minOf(620, bounds.width - 48).coerceAtLeast(240)
+    val height = 120
+    val state = androidx.compose.ui.window.rememberDialogState(
+        position = androidx.compose.ui.window.WindowPosition(
+            (bounds.x + (bounds.width - width) / 2).dp,
+            (bounds.y + bounds.height - 40 - height).dp,
+        ),
+        size = androidx.compose.ui.unit.DpSize(width.dp, height.dp),
+    )
+    androidx.compose.ui.window.DialogWindow(
+        onCloseRequest = { DesktopTeam.closeComposer() },
+        state = state,
+        title = "Wyrm chat",
+        undecorated = true,
+        transparent = true,
+        resizable = false,
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            ArenaComposer(Modifier.fillMaxWidth())
         }
     }
 }
@@ -378,6 +529,7 @@ private fun PaperField(
     framed: Boolean = true,
     onEnter: (() -> Unit)? = null,
     onEscape: (() -> Unit)? = null,
+    onTab: (() -> Unit)? = null,
 ) {
     val shape = wyrmRounded(12.dp)
     BasicTextField(
@@ -395,6 +547,7 @@ private fun PaperField(
                 when {
                     event.key == Key.Enter && onEnter != null -> { onEnter(); true }
                     event.key == Key.Escape && onEscape != null -> { onEscape(); true }
+                    event.key == Key.Tab && onTab != null -> { onTab(); true }
                     else -> false
                 }
             },

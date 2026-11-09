@@ -254,8 +254,8 @@ private fun MenuRow(label: String, colour: Color, onClick: () -> Unit) {
 /** Android's EventGateSheet: one deliberate pause before an event that has not begun. */
 @Composable
 private fun EventGate(event: WyrmNotification, onOkay: () -> Unit, onJoinAnyway: () -> Unit) {
-    Popup(alignment = Alignment.Center, onDismissRequest = onOkay, properties = PopupProperties(focusable = true)) {
-        Column(Modifier.width(420.dp).paperPanel(wyrmRounded(24.dp), elevation = 26.dp).padding(22.dp)) {
+    com.wyrm.omrajput.ui.CentredDialog(onDismiss = onOkay, onConfirm = onOkay) {
+        Column(Modifier.fillMaxWidth()) {
             Text("BATTLEDOME", fontFamily = Wyrm.Body, fontWeight = FontWeight.Bold, fontSize = 10.5.sp, letterSpacing = 1.2.sp, color = Wyrm.Live)
             Spacer(Modifier.height(7.dp))
             Text("Hasn't started yet", fontFamily = Wyrm.Display, fontSize = 25.sp, color = Wyrm.Ink)

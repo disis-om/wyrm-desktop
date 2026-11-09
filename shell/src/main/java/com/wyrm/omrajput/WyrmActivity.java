@@ -18,9 +18,16 @@ public final class WyrmActivity {
     public static native int nativeDesktopRun(String workDir, int width, int height);
     public static native void nativeDesktopResize(int width, int height);
     public static native long nativeDesktopCopyFrame(byte[] dst, long lastSeq);
+    public static native float[] nativeDesktopLaser();
     public static native void nativeDesktopPointer(int action, float x, float y, int button, float wheel);
     public static native void nativeDesktopKey(int scancode, boolean down);
     public static native void nativeDesktopQuit();
+    /** Direct presentation (2026-11-05): a displayable AWT Canvas's HWND via JAWT; 0 if none. */
+    public static native long nativeDesktopCanvasHwnd(java.awt.Component canvas);
+    /** Present to this HWND (0 = hidden window + readback); waits for the switch. */
+    public static native boolean nativeDesktopSetTarget(long hwnd);
+    /** Laser in Normal mode, pointer over the focused game, and the hint line, for a direct match. */
+    public static native void nativeDesktopOverlay(boolean laserNormal, boolean hover, String hint);
     /** Windows DPAPI (CryptProtectData / CryptUnprotectData) for this Windows user; null on failure. */
     public static native byte[] nativeDesktopProtect(byte[] data);
     public static native byte[] nativeDesktopUnprotect(byte[] blob);
@@ -72,8 +79,43 @@ public final class WyrmActivity {
     public static native void nativeSetTeamChat(String packed);
     public static native void nativeSetTeamHudStyle(float[] values);
     public static native void nativeCloseTeamChat(float seconds);
+    // The arena chat window's GLOBAL and ONLINE tabs (android_team.c).
+    public static native void nativeSetGlobalChat(String packed);
+    public static native void nativeSetOnlinePlayers(String packed);
+    public static native int nativeChatTab();
+    public static native void nativeSetChatTab(int tab);
+    public static native void nativeToggleChatPanel();
     /** Desktop only: where the roster and chat window were drawn (x, y, w, h each). */
     public static native float[] nativeDesktopTeamRects();
+
+    /** Live Wyrm skin preview (OM, 2026-10-25; game/wyrm_skin_preview.c), as Android. */
+    private static native long nativeWyrmSkinPreview(int skin, float w, float h, double now, int rgb,
+                                                     float[] xy, int[] argb, short[] idx);
+
+    private static native long nativeWyrmSkinPose(int skin, float[] xs, float[] ys,
+            float radius, double now, int rgb, boolean boosting, float[] xy, int[] argb, short[] idx);
+    public static long wyrmSkinPose(int skin, float[] xs, float[] ys, float radius,
+            double now, int rgb, boolean boosting, float[] xy, int[] argb, short[] idx) {
+        try { return nativeWyrmSkinPose(skin, xs, ys, radius, now, rgb, boosting, xy, argb, idx); }
+        catch (UnsatisfiedLinkError unavailable) { return 0; }
+    }
+
+    /** One frame of the live preview: vertex count in the low 16 bits, index count above; 0 without the engine. */
+    public static long wyrmSkinPreview(int skin, float w, float h, double now, int rgb,
+                                       float[] xy, int[] argb, short[] idx) {
+        try {
+            return nativeWyrmSkinPreview(skin, w, h, now, rgb, xy, argb, idx);
+        } catch (UnsatisfiedLinkError e) {
+            return 0;
+        }
+    }
+
+    /** Custom arena id (network/callback.c), sent to every arena since 2026-10-24, as Android. */
+    private static native void nativeSetCustomArenas(String id, String list);
+
+    public static void setCustomArenas(String id, String list) {
+        nativeSetCustomArenas(id, list);
+    }
 
     // ---- Engine -> app callbacks (signatures must match the C) ----
     public static void setScreenFromNative(int screen) { Engine.onScreen(screen); }

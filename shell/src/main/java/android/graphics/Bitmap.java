@@ -40,6 +40,13 @@ public final class Bitmap {
     public int getPixel(int x, int y) { return image.getRGB(x, y); }
     public void prepareToDraw() {}
     public void recycle() {}
+    public void eraseColor(int color) {
+        Graphics2D g = image.createGraphics();
+        g.setComposite(java.awt.AlphaComposite.Src);
+        g.setColor(new java.awt.Color(color, true));
+        g.fillRect(0, 0, getWidth(), getHeight());
+        g.dispose();
+    }
 
     public static Bitmap createBitmap(int width, int height, Config config) {
         return new Bitmap(new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB));

@@ -329,45 +329,7 @@ private fun SectionContent(section: Social.Section) {
                 onJoin = Social::joinFriendArena,
             )
         }
-        Social.Section.PROFILE -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            Box(Modifier.widthIn(max = 935.dp).fillMaxSize().padding(horizontal = 16.dp)) {
-                CompositionLocalProvider(LocalPageChromeHidden provides true) {
-                    IosProfileScreen(
-                        own = true,
-                        playerId = me?.id.orEmpty(),
-                        displayName = me?.displayName?.ifBlank { "Wyrm" } ?: "Wyrm",
-                        handle = me?.handle.orEmpty(),
-                        bio = me?.bio.orEmpty(),
-                        avatarUrl = me?.avatarUrl.orEmpty(),
-                        avatarKey = me?.avatarKey ?: "mono-ink",
-                        score = me?.highestScore ?: 0,
-                        kills = me?.kills ?: 0,
-                        followers = me?.followerCount ?: 0,
-                        following = me?.followingCount ?: 0,
-                        isFollowing = false,
-                        followsYou = false,
-                        canMessage = false,
-                        refreshing = Social.profileLoading,
-                        insetTop = 8.dp,
-                        insetBottom = 16.dp,
-                        onBack = {},
-                        onEdit = Social::openEditProfile,
-                        onRefresh = { Social.refreshProfile(force = true) },
-                        onFollowers = { Social.openSection(Social.Section.CONNECTIONS) },
-                        onFollowing = { Social.openSection(Social.Section.CONNECTIONS) },
-                        onToggleFollow = {},
-                        onMessage = {},
-                        onOpenTrail = Social::openTrail,
-                        onNewTrail = { ShellNav.tab.value = Tab.Trails; Social.openStudio() },
-                        onShare = Social::shareProfile,
-                        onChangePhoto = { Social.pickPhoto(fromProfile = true) },
-                        onRemovePhoto = Social::removePhoto,
-                        photoBusy = Social.formBusy,
-                        photoError = Social.photoError,
-                    )
-                }
-            }
-        }
+        Social.Section.PROFILE -> OwnProfilePane()
         Social.Section.VOICE -> EmptyPane(
             title = "Voice rooms",
             body = "Talking with your team is coming to Wyrm for computers. For now, join a room from Wyrm on your phone.",
@@ -634,3 +596,48 @@ private fun RailButton(label: String, glyph: IosGlyph, onClick: () -> Unit) {
 /** Kept for Shell.kt: Social's pages now live inside the tabs; only the trail window floats. */
 @Composable
 internal fun SocialPagesHost() = TrailWindowHost()
+
+/** Your own profile, Android's (IosProfileScreen): Social › Your profile and Settings › Profile (OM, 2026-10-19). */
+@Composable
+internal fun OwnProfilePane() {
+    val me = Account.player
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.widthIn(max = 935.dp).fillMaxSize().padding(horizontal = 16.dp)) {
+            CompositionLocalProvider(LocalPageChromeHidden provides true) {
+                IosProfileScreen(
+                    own = true,
+                    playerId = me?.id.orEmpty(),
+                    displayName = me?.displayName?.ifBlank { "Wyrm" } ?: "Wyrm",
+                    handle = me?.handle.orEmpty(),
+                    bio = me?.bio.orEmpty(),
+                    avatarUrl = me?.avatarUrl.orEmpty(),
+                    avatarKey = me?.avatarKey ?: "mono-ink",
+                    score = me?.highestScore ?: 0,
+                    kills = me?.kills ?: 0,
+                    followers = me?.followerCount ?: 0,
+                    following = me?.followingCount ?: 0,
+                    isFollowing = false,
+                    followsYou = false,
+                    canMessage = false,
+                    refreshing = Social.profileLoading,
+                    insetTop = 8.dp,
+                    insetBottom = 16.dp,
+                    onBack = {},
+                    onEdit = Social::openEditProfile,
+                    onRefresh = { Social.refreshProfile(force = true) },
+                    onFollowers = { Social.openSection(Social.Section.CONNECTIONS) },
+                    onFollowing = { Social.openSection(Social.Section.CONNECTIONS) },
+                    onToggleFollow = {},
+                    onMessage = {},
+                    onOpenTrail = Social::openTrail,
+                    onNewTrail = { ShellNav.tab.value = Tab.Trails; Social.openStudio() },
+                    onShare = Social::shareProfile,
+                    onChangePhoto = { Social.pickPhoto(fromProfile = true) },
+                    onRemovePhoto = Social::removePhoto,
+                    photoBusy = Social.formBusy,
+                    photoError = Social.photoError,
+                )
+            }
+        }
+    }
+}

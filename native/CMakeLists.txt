@@ -2,7 +2,7 @@
 # (app/src + thermite) — never a copy (Wyrm Desktop AGENTS.md rule "One engine").
 # The SDL3 build is the same source Android uses (android-sdl).
 #
-# Platform: VLITHER_ANDROID selects the SDL3 + JNI paths the engine already
+# Platform: WYRM_SDL_JNI selects the SDL3 + JNI paths the engine already
 # has; WYRM_DESKTOP marks the few places that differ on a desktop (hidden
 # window, frame readback for Compose, mouse steering, assets from disk).
 cmake_minimum_required(VERSION 3.22)
@@ -37,7 +37,8 @@ target_compile_definitions(wyrm PRIVATE
     SETTINGS_VERSION="2.8"
     CIMGUI_NO_EXPORT
     CGLM_FORCE_DEPTH_ZERO_TO_ONE
-    VLITHER_ANDROID=1
+    MG_ENABLE_IPV6=1
+    WYRM_SDL_JNI=1
     WYRM_DESKTOP=1
     SDL_MAIN_HANDLED=1
     _CRT_SECURE_NO_WARNINGS
@@ -62,7 +63,10 @@ target_compile_options(wyrm PRIVATE
     "/FI${CMAKE_CURRENT_LIST_DIR}/desktop_compat.h"
     -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
     -Wno-missing-braces -Wno-sign-compare -Wno-deprecated-declarations
-    -Wno-microsoft-anon-tag -Wno-gnu-empty-initializer -Wno-c23-extensions)
+    -Wno-microsoft-anon-tag -Wno-gnu-empty-initializer -Wno-c23-extensions
+    # The same optimisation as Android's engine (-O3, no fast-math; OM
+    # 2026-10-19): clang-cl's /O2 alone is -O2.
+    $<$<NOT:$<CONFIG:Debug>>:/clang:-O3>)
 
 # crypt32: DPAPI (CryptProtectData) for the team vault key, desktop_bridge.c.
 target_link_libraries(wyrm PRIVATE SDL3::SDL3 Vulkan::Vulkan ws2_32 iphlpapi crypt32)

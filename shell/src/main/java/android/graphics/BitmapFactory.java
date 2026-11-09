@@ -11,6 +11,12 @@ import javax.imageio.stream.ImageInputStream;
 /** Wyrm Desktop: android.graphics.BitmapFactory's decode, with bounds and inSampleSize. */
 public final class BitmapFactory {
     private BitmapFactory() {}
+    public static Bitmap decodeStream(java.io.InputStream stream) {
+        try {
+            BufferedImage image = ImageIO.read(stream);
+            return image == null ? null : new Bitmap(image);
+        } catch (Exception error) { return null; }
+    }
 
     public static class Options {
         public boolean inJustDecodeBounds;

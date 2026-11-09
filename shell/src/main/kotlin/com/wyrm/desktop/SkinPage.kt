@@ -2,6 +2,7 @@ package com.wyrm.desktop
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -110,14 +111,14 @@ import kotlinx.coroutines.launch
  * Skin, for a desktop window (OM, 2026-10-02): the stage across the top
  * centre (the worn snake slithering, `SlitherStage`), the sections in a Liquid
  * Glass segmented control under it, and the chosen section below, laid out
- * wide. Everything a pointer rests on is tried on the stage at once (presets,
- * beads, accessories, Wyrm looks, floors); a click wears it. Same pieces,
- * catalogues and engine glue as Wyrm Android's Skin tab (IosSkinScreen).
+ * wide. A click wears what it is on (OM, 2026-10-19: no trying on under the
+ * pointer any more). Same pieces, catalogues and engine glue as Wyrm
+ * Android's Skin tab (IosSkinScreen).
  */
 
 internal enum class Section(val title: String) {
     PRESETS("Default skins"), PATTERN("Pattern"), ACCESSORIES("Accessory"),
-    WYRM_ACCESSORIES("Wyrm accessories"), BACKGROUND("Arena background"), TAGS("Tag"),
+    WYRM_ACCESSORIES("Looks"), WYRM_SKINS("Wyrm skins"), BACKGROUND("Background"), TAGS("Tag"),
 }
 
 /* Tags are on again with NTL (OM, 2026-10-04 on the phones; the desktop
@@ -162,10 +163,10 @@ private class TryOn(private val scope: CoroutineScope) {
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+// No trying on under the pointer (OM, 2026-10-19): only a click changes the
+// skin. Kept as a no-op so the tiles read the same.
+@Suppress("UNUSED_PARAMETER")
 private fun Modifier.tryOn(tryOn: TryOn, apply: TryOn.() -> Unit): Modifier = this
-    .onPointerEvent(PointerEventType.Enter) { tryOn.show(apply) }
-    .onPointerEvent(PointerEventType.Exit) { tryOn.leave() }
 
 @Composable
 fun SkinPage() {
@@ -195,6 +196,24 @@ fun SkinPage() {
         accessory = state.accessory
     }
     LaunchedEffect(background) { backgroundId = background }
+    // Wyrm skins (the creatures; the engine's `skin.wyrm`, 0 = none), as Android.
+    var wyrmSkin by remember { mutableIntStateOf(EngineSettings.number("skin.wyrm", 0f).roundToInt()) }
+    LaunchedEffect(EngineSettings.settings) { wyrmSkin = EngineSettings.number("skin.wyrm", 0f).roundToInt() }
+    fun setWyrmSkin(number: Int) {
+        wyrmSkin = number
+        EngineSettings.write("skin.wyrm", number.toFloat())
+    }
+    val skinWorn = com.wyrm.omrajput.ui.WyrmSkins.byNumber(wyrmSkin) != null
+    // Skin texture (OM, 2026-10-25), as Android: the engine's `skin.texture` and
+    // `skin.texture_mine`; the stage and the beads wear it (SkinTexture.bead).
+    LaunchedEffect(EngineSettings.settings) {
+        com.wyrm.omrajput.ui.SkinTexture.current = EngineSettings.number("skin.texture", 0f).roundToInt().coerceIn(0, 4)
+        com.wyrm.omrajput.ui.SkinTexture.mine = EngineSettings.number("skin.texture_mine", 0f) >= 0.5f
+    }
+    // The tag on the stage, as it hangs in the arena.
+    val tagId = EngineSettings.number("tags.index", -1f).roundToInt()
+    val tagChain = EngineSettings.number("tags.chain", 1f).toDouble()
+    val tagScale = EngineSettings.number("tags.scale", 1f).toDouble()
 
     val customGroups = pattern.filter { it in SkinCatalog.validGroups }.take(256)
     val customColors = List(customGroups.size) { patternColors.getOrElse(it) { 0 } }
@@ -206,13 +225,39 @@ fun SkinPage() {
     var editingPattern by remember { mutableStateOf(false) }
     var wheelRgb by remember { mutableIntStateOf(prefs.getInt("air-rgb", 0x808080) and 0xFFFFFF) }
 
-    fun savePattern(groups: List<Int>, colors: List<Int>) {
+    val undoPatterns = remember { mutableListOf<Pair<List<Int>, List<Int>>>() }
+    val redoPatterns = remember { mutableListOf<Pair<List<Int>, List<Int>>>() }
+    var clearAsking by remember { mutableStateOf(false) }
+    fun applyPattern(groups: List<Int>, colors: List<Int>) {
         editingPattern = true
+        if (wyrmSkin != 0) setWyrmSkin(0) // building a skin takes the creature off
         pattern = groups
         patternColors = colors.take(groups.size)
         customEnabled = groups.isNotEmpty()
         Engine.skinCode(SkinCatalog.code(groups), IntArray(groups.size) { colors.getOrElse(it) { 0 } })
     }
+
+    fun savePattern(groups: List<Int>, colors: List<Int>) {
+        if (groups == pattern && colors == patternColors) return
+        undoPatterns.add(pattern.toList() to patternColors.toList())
+        if (undoPatterns.size > 100) undoPatterns.removeAt(0)
+        redoPatterns.clear()
+        applyPattern(groups, colors)
+    }
+    fun undoPattern() {
+        val before = undoPatterns.removeLastOrNull() ?: return
+        redoPatterns.add(pattern.toList() to patternColors.toList())
+        applyPattern(before.first, before.second)
+    }
+    fun redoPattern() {
+        val after = redoPatterns.removeLastOrNull() ?: return
+        undoPatterns.add(pattern.toList() to patternColors.toList())
+        applyPattern(after.first, after.second)
+    }
+    if (section == Section.PATTERN) EditorShortcuts(::undoPattern, ::redoPattern, { clearAsking = true })
+    if (clearAsking) com.wyrm.omrajput.ui.IosActionSheet("Clear this pattern?", listOf(
+        com.wyrm.omrajput.ui.IosSheetAction("Clear pattern", destructive = true) { savePattern(emptyList(), emptyList()) }
+    ), 0.dp) { clearAsking = false }
 
     fun open(target: Section) {
         if (target != Section.PATTERN) editingPattern = false
@@ -305,6 +350,10 @@ fun SkinPage() {
                 floorAlpha = floorAlpha,
                 top = TopTabsClearance - 8.dp,
                 faceZoom = faceZoom,
+                tag = if (skinWorn || trial != null) -1 else tagId,
+                tagChain = tagChain,
+                tagScale = tagScale,
+                wyrmSkin = if (trial != null || editingPattern) 0 else wyrmSkin,
                 modifier = Modifier.fillMaxWidth().height(stageHeight),
             )
             Row(
@@ -349,17 +398,24 @@ fun SkinPage() {
                         when (shown) {
                             Section.PRESETS -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                                 Box(Modifier.widthIn(max = 840.dp)) {
-                                    PresetsSection(preset, customEnabled, tryOn) { index ->
+                                    PresetsSection(preset, customEnabled && !skinWorn, tryOn) { index ->
                                         preset = index
                                         customEnabled = false
                                         editingPattern = false
+                                        if (wyrmSkin != 0) setWyrmSkin(0)
                                         Engine.skinPreset(index)
                                     }
                                 }
                             }
-                            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 32.dp)) {
-                                when (shown) {
-                                    Section.PATTERN -> {
+                            // The builder (OM, 2026-10-19): the beads scroll on the left, the
+                            // colour wheel stays put on the right; one seamless grid of beads.
+                            Section.PATTERN -> Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp)) {
+                                        // Skin texture (OM, 2026-10-25): Android's "Select texture" with Mine / Everyone.
+                                        com.wyrm.omrajput.ui.SkinTextureSelector(
+                                            onPick = { index -> EngineSettings.write("skin.texture", index.toFloat()) },
+                                            onMine = { on -> EngineSettings.write("skin.texture_mine", if (on) 1f else 0f) },
+                                        )
+                                        Spacer(Modifier.height(12.dp))
                                         PatternBar(
                                             customGroups = customGroups,
                                             onType = { typed ->
@@ -367,38 +423,38 @@ fun SkinPage() {
                                                 val common = groups.zip(customGroups).takeWhile { it.first == it.second }.size
                                                 savePattern(groups, List(groups.size) { if (it < common) customColors[it] else 0 })
                                             },
-                                            onUndo = {
-                                                val groups = customGroups.dropLast(1)
-                                                savePattern(groups, customColors.take(groups.size))
-                                            },
-                                            onClear = { savePattern(emptyList(), emptyList()) },
+                                            onUndo = ::undoPattern,
+                                            onRedo = ::redoPattern,
+                                            onClear = { clearAsking = true },
                                         )
-                                        PatternPickers(
-                                            beads = {
-                                                BeadPalette(textures, tryOn) { group ->
-                                                    if (customGroups.size < 256) savePattern(customGroups + group, customColors + 0)
-                                                }
-                                            },
-                                            wheel = {
+                                        Row(Modifier.weight(1f).fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                                            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
+                                                AllBeadsPalette(
+                                                    textures, wheelRgb,
+                                                    onGroup = { group -> if (customGroups.size < 256) savePattern(customGroups + group, customColors + 0) },
+                                                    onWyrmBead = { argb ->
+                                                        if (customGroups.size < 256) savePattern(customGroups + AirSkin.nearestGroup(argb and 0xFFFFFF), customColors + argb)
+                                                    },
+                                                )
+                                            }
+                                            Column(Modifier.width(340.dp)) {
                                                 AirWheelPanel(textures, prefs, onColour = { wheelRgb = it }) { kind, rgb ->
                                                     if (customGroups.size < 256) {
                                                         savePattern(customGroups + AirSkin.nearestGroup(rgb), customColors + (AirSkin.marker(kind) or rgb))
                                                     }
                                                 }
-                                            },
-                                            wyrmBeads = {
-                                                WyrmBeadPalette(textures, wheelRgb, tryOn) { argb ->
-                                                    if (customGroups.size < 256) {
-                                                        savePattern(customGroups + AirSkin.nearestGroup(argb and 0xFFFFFF), customColors + argb)
-                                                    }
-                                                }
-                                            },
-                                        )
-                                    }
+                                            }
+                                        }
+                            }
+                            else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 32.dp)) {
+                                when (shown) {
                                     Section.ACCESSORIES -> {
+                                        if (skinWorn) WyrmSkinOn { setWyrmSkin(0) }
                                         Spacer(Modifier.height(14.dp))
+                                        val shownCount = rememberReveal(SkinCatalog.accessories.size + 1)
                                         TileGrid(minimum = 104.dp, count = SkinCatalog.accessories.size + 1) { index ->
-                                            if (index == 0) {
+                                            if (index >= shownCount) SkeletonTile()
+                                            else if (index == 0) {
                                                 Box(Modifier.fillMaxSize().tryOn(tryOn) { this.accessory = -1 }) {
                                                     SelectionTile(accessory < 0, "None") { accessory = -1; Engine.skinAccessory(-1) }
                                                 }
@@ -413,12 +469,18 @@ fun SkinPage() {
                                             }
                                         }
                                     }
-                                    Section.WYRM_ACCESSORIES -> WyrmAccessoriesSection(textures, look, tryOn)
+                                    Section.WYRM_ACCESSORIES -> {
+                                        if (skinWorn) WyrmSkinOn { setWyrmSkin(0) }
+                                        WyrmAccessoriesSection(textures, look, tryOn)
+                                    }
+                                    Section.WYRM_SKINS -> WyrmSkinsSection(textures, wyrmSkin) { setWyrmSkin(it) }
                                     Section.BACKGROUND -> {
                                         Spacer(Modifier.height(14.dp))
+                                        val shownCount = rememberReveal(SkinCatalog.backgroundOrder.size, perFrame = 4)
                                         TileGrid(minimum = 200.dp, count = SkinCatalog.backgroundOrder.size, aspect = null) { index ->
                                             val item = SkinCatalog.backgrounds[SkinCatalog.backgroundOrder[index]]
-                                            Box(Modifier.hoverLift().tryOn(tryOn) { this.background = item.id }) {
+                                            if (index >= shownCount) SkeletonTile(Modifier.height(130.dp))
+                                            else Box(Modifier.hoverLift().tryOn(tryOn) { this.background = item.id }) {
                                                 BackgroundTile(item, textures?.backgrounds?.get(item.id), backgroundId == item.id) {
                                                     backgroundId = item.id
                                                     Engine.skinBackground(item.id)
@@ -426,7 +488,10 @@ fun SkinPage() {
                                             }
                                         }
                                     }
-                                    Section.TAGS -> TagsSection(textures)
+                                    Section.TAGS -> {
+                                        if (skinWorn) WyrmSkinOn { setWyrmSkin(0) }
+                                        TagsSection(textures)
+                                    }
                                     else -> Unit
                                 }
                             }
@@ -515,7 +580,7 @@ private fun PresetRow(index: Int, worn: Boolean, modifier: Modifier, onClick: ()
 
 /** The code field with its count, undo and clear: Android's pattern bar, one line. */
 @Composable
-private fun PatternBar(customGroups: List<Int>, onType: (String) -> Unit, onUndo: () -> Unit, onClear: () -> Unit) {
+private fun PatternBar(customGroups: List<Int>, onType: (String) -> Unit, onUndo: () -> Unit, onRedo: () -> Unit, onClear: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(top = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -544,6 +609,7 @@ private fun PatternBar(customGroups: List<Int>, onType: (String) -> Unit, onUndo
         )
         Text("${customGroups.size} / 256 beads", fontFamily = Wyrm.Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Wyrm.Quiet)
         TextAction("UNDO", Wyrm.Ink, onUndo)
+        TextAction("REDO", Wyrm.Ink, onRedo)
         TextAction("CLEAR", Color(0xFFFF3B30), onClear)
     }
 }
@@ -655,21 +721,29 @@ private fun WyrmAccessoriesSection(textures: SkinTextures?, look: WyrmLookSpec, 
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         PaperSegmented(options = listOf("Hair", "Ears", "Glasses"), selected = tab, onSelect = { tab = it }, modifier = Modifier.width(340.dp))
-        if (tab == 0) {
-            Column(Modifier.weight(1f).widthIn(max = 480.dp)) {
-                Text("Hair colour", fontFamily = Wyrm.Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Wyrm.Quiet)
-                Spacer(Modifier.height(6.dp))
-                GradientTrack(
-                    fraction = look.hairTone,
-                    brush = Brush.horizontalGradient(*WyrmLook.hairStops.map { (at, rgb) -> at to WyrmLook.rgbColor(rgb) }.toTypedArray()),
-                    onPick = { tone -> WyrmLookStore.pickHairTone(tone) },
-                )
-            }
-        }
     }
+    val shownCount = rememberReveal(41)
     when (tab) {
-        0 -> TileGrid(minimum = 104.dp, count = WyrmLook.hairNames.size + 1) { index ->
+        0 -> Column {
+            // The hair colour belongs to the hair (OM, 2026-10-19): its own row
+            // above the hair styles, so nothing beside the tabs comes and goes.
+            Row(
+                Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp).widthIn(max = 560.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("Hair colour", fontFamily = Wyrm.Body, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Wyrm.Quiet)
+                Box(Modifier.weight(1f)) {
+                    GradientTrack(
+                        fraction = look.hairTone,
+                        brush = Brush.horizontalGradient(*WyrmLook.hairStops.map { (at, rgb) -> at to WyrmLook.rgbColor(rgb) }.toTypedArray()),
+                        onPick = { tone -> WyrmLookStore.pickHairTone(tone) },
+                    )
+                }
+            }
+            TileGrid(minimum = 104.dp, count = WyrmLook.hairNames.size + 1) { index ->
             val style = index - 1
+            if (index >= shownCount) { SkeletonTile(); return@TileGrid }
             Box(Modifier.fillMaxSize().then(if (index > 0) Modifier.hoverLift() else Modifier).tryOn(tryOn) { this.look = look.copy(hair = style) }) {
                 if (index == 0) {
                     SelectionTile(look.hair < 0, "None") { WyrmLookStore.pickHair(-1) }
@@ -679,6 +753,7 @@ private fun WyrmAccessoriesSection(textures: SkinTextures?, look: WyrmLookSpec, 
                     }
                 }
             }
+            }
         }
         else -> {
             val ears = tab == 1
@@ -687,6 +762,7 @@ private fun WyrmAccessoriesSection(textures: SkinTextures?, look: WyrmLookSpec, 
             fun pick(style: Int) = if (ears) WyrmLookStore.pickEars(style) else WyrmLookStore.pickGlasses(style)
             TileGrid(minimum = 104.dp, count = names.size + 1) { index ->
                 val style = index - 1
+                if (index >= shownCount) { SkeletonTile(); return@TileGrid }
                 val tried = if (ears) look.copy(ears = style) else look.copy(glasses = style)
                 Box(Modifier.fillMaxSize().then(if (index > 0) Modifier.hoverLift() else Modifier).tryOn(tryOn) { this.look = tried }) {
                     if (index == 0) {
@@ -717,8 +793,10 @@ private fun TagsSection(textures: SkinTextures?) {
         TagSlider("Size", "tags.scale", 0.4f..2f, Modifier.weight(1f))
     }
     Spacer(Modifier.height(18.dp))
+    val shownCount = rememberReveal(TagPickerOrder.size + 1, perFrame = 12)
     TileGrid(minimum = 88.dp, count = TagPickerOrder.size + 1) { index ->
-        if (index == 0) {
+        if (index >= shownCount) SkeletonTile()
+        else if (index == 0) {
             SelectionTile(tag < 0, "None") { tag = -1; EngineSettings.write("tags.index", -1f) }
         } else {
             val item = SkinCatalog.tags[TagPickerOrder[index - 1]]
@@ -752,4 +830,101 @@ private fun TagSlider(label: String, id: String, range: ClosedFloatingPointRange
 /** Whether this run has drawn the Skin page once (its pictures are on the GPU). */
 private object SkinPageWarm {
     var done = false
+}
+
+/**
+ * Tiles come in a few at a time (OM, 2026-10-19: everything at once made the
+ * page stutter): how many may be drawn now; the rest show a skeleton.
+ */
+@Composable
+private fun rememberReveal(total: Int, perFrame: Int = 8): Int {
+    var shown by remember { mutableIntStateOf(0) }
+    LaunchedEffect(total) {
+        while (shown < total) {
+            androidx.compose.runtime.withFrameNanos { }
+            shown = minOf(total, shown + perFrame)
+        }
+    }
+    return shown
+}
+
+/** A tile not drawn yet: a soft breathing block where it will be. */
+@Composable
+private fun SkeletonTile(modifier: Modifier = Modifier) {
+    val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "skeleton")
+    val a by pulse.animateFloat(
+        0.45f, 0.8f,
+        androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween<Float>(700), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "skeleton-alpha",
+    )
+    Box(modifier.fillMaxSize().clip(wyrmRounded(15.dp)).background(Wyrm.Well.copy(alpha = a)))
+}
+
+/** Every bead in one grid: the official colours, then Wyrm's own (no divider between). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AllBeadsPalette(textures: SkinTextures?, wheelRgb: Int, onGroup: (Int) -> Unit, onWyrmBead: (Int) -> Unit) {
+    val total = SkinCatalog.validGroups.size + WyrmBeads.COUNT
+    val shownCount = rememberReveal(total, perFrame = 16)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SkinCatalog.validGroups.forEachIndexed { i, group ->
+            if (i >= shownCount) BeadSkeleton()
+            else BeadButton(textures?.beads?.get(group), null, Modifier) { onGroup(group) }
+        }
+        for (kind in 0 until WyrmBeads.COUNT) {
+            if (SkinCatalog.validGroups.size + kind >= shownCount) { BeadSkeleton(); continue }
+            val argb = WyrmBeads.argb(kind, wheelRgb)
+            val tint = if (WyrmBeads.tinted[kind]) Color(0xFF000000.toInt() or wheelRgb) else null
+            BeadButton(textures?.wyrmBeads?.get(kind), tint, Modifier) { onWyrmBead(argb) }
+        }
+    }
+}
+
+@Composable
+private fun BeadSkeleton() {
+    Box(Modifier.size(46.dp).clip(CircleShape).background(Wyrm.Well))
+}
+
+/** A Wyrm skin is worn: what that means here, and taking it off. */
+@Composable
+private fun WyrmSkinOn(onTakeOff: () -> Unit) {
+    Row(
+        Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp).fillMaxWidth().clip(wyrmRounded(14.dp)).background(Wyrm.Well).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(
+            "A Wyrm skin is on, so this does not show in the arena.",
+            fontFamily = Wyrm.Body, fontSize = 13.sp, color = Wyrm.Mute, modifier = Modifier.weight(1f),
+        )
+        TextAction("TAKE IT OFF", Wyrm.Ink, onTakeOff)
+    }
+}
+
+/** Wyrm skins (the creatures and strip looks), Android's tiles in a wider grid. */
+@Composable
+private fun WyrmSkinsSection(textures: SkinTextures?, selected: Int, onPick: (Int) -> Unit) {
+    val creatures = com.wyrm.omrajput.ui.WyrmSkins.creatures
+    val strips = com.wyrm.omrajput.ui.WyrmSkins.strips
+    Text(
+        "Pick one and your snake becomes it in the arena. Tags and accessories are off while one is on.",
+        fontFamily = Wyrm.Body, fontSize = 13.sp, color = Wyrm.Quiet, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
+    )
+    val shownCount = rememberReveal(creatures.size + 1 + strips.size, perFrame = 3)
+    TileGrid(minimum = 220.dp, count = creatures.size + 1, aspect = 1.45f) { index ->
+        if (index >= shownCount) SkeletonTile()
+        else if (index == 0) com.wyrm.omrajput.ui.WyrmSkinTile(selected == 0, "None", null) { onPick(0) }
+        else {
+            val skin = creatures[index - 1]
+            com.wyrm.omrajput.ui.WyrmSkinTile(selected == skin.number, skin.name, textures?.wyrmSkins?.get(skin.number)) { onPick(skin.number) }
+        }
+    }
+    IosSectionLabel("Strip looks")
+    TileGrid(minimum = 220.dp, count = strips.size, aspect = 1.45f) { index ->
+        if (creatures.size + 1 + index >= shownCount) SkeletonTile()
+        else {
+            val skin = strips[index]
+            com.wyrm.omrajput.ui.WyrmSkinTile(selected == skin.number, skin.name, textures?.wyrmSkins?.get(skin.number)) { onPick(skin.number) }
+        }
+    }
 }

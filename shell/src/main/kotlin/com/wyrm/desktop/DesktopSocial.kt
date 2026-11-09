@@ -100,6 +100,8 @@ internal object Social {
     var boardLoading by mutableStateOf(false); private set
     private var boardUpdatedAt = 0L
     private var boardGen = 0
+    private var boardNextPull = 0L
+    private var boardInFlight = false
 
     // Chats
     var conversations by mutableStateOf<List<Conversation>>(emptyList()); private set
@@ -128,6 +130,8 @@ internal object Social {
     var renameAllowance by mutableStateOf<RenameAllowance?>(null); private set
     /** Where the photo picker came from: the profile, or Edit profile. */
     private var photoFromProfile = false
+    var profileDraft: com.wyrm.omrajput.ui.ProfileEditDraft? = null
+        private set
 
     private var started = false
     private var loopJob: Job? = null
@@ -204,6 +208,12 @@ internal object Social {
 
     /** Sign-out: nothing of this account stays in memory or in the cache. */
     fun reset() {
+        boardGen++
+        boardNextPull = 0L
+        boardLoading = false
+        boardInFlight = false
+        profileDraft = null
+        SettingsProfile.editing = false
         chatJob?.cancel()
         loopJob?.cancel()
         started = false
@@ -228,7 +238,7 @@ internal object Social {
     fun push(page: Page) {
         // Social's pages live in the Trails and Social tabs' main area; from
         // anywhere else (an alert on Play, a toast) they open on Social.
-        if (ShellNav.tab.value != Tab.Social && ShellNav.tab.value != Tab.Trails) ShellNav.tab.value = Tab.Social
+        if (ShellNav.tab.value != Tab.Social && ShellNav.tab.value != Tab.Trails && !SettingsProfile.editing) ShellNav.tab.value = Tab.Social
         modalTrail = null
         pages.add(page)
         onTopChanged()
@@ -257,11 +267,13 @@ internal object Social {
     fun back() {
         if (pages.isEmpty()) return
         pages.removeAt(pages.lastIndex)
+        if (SettingsProfile.editing && pages.isEmpty()) SettingsProfile.editing = false
         onTopChanged()
     }
 
     fun closeAll() {
         pages.clear()
+        SettingsProfile.editing = false
         modalTrail = null
         onTopChanged()
     }
@@ -305,11 +317,15 @@ internal object Social {
 
     /** Android's refreshLeaderboards: both boards together; a failure keeps the shown rows. */
     fun refreshLeaderboards(silent: Boolean = false, minAgeMs: Long = 0L) {
+        val now = System.currentTimeMillis()
+        if (boardInFlight || now < boardNextPull || repository.shouldStayQuiet) return
         if (silent && minAgeMs > 0L) {
             if (System.currentTimeMillis() - boardUpdatedAt < minAgeMs) return
             if (repository.shouldStayQuiet) return
         }
         if (!repository.hasSession) return
+        boardNextPull = now + 10_000L
+        boardInFlight = true
         val gen = ++boardGen
         scope.launch {
             if (!silent) boardLoading = true
@@ -321,7 +337,11 @@ internal object Social {
             scoreResult.onSuccess { scoreBoard = it; cache.saveLeaderboard("score", it) }
             killResult.onSuccess { killBoard = it; cache.saveLeaderboard("kills", it) }
             if (scoreResult.isSuccess && killResult.isSuccess) boardUpdatedAt = System.currentTimeMillis()
+            listOfNotNull(scoreResult.exceptionOrNull(), killResult.exceptionOrNull()).forEach {
+                if (repository.isRateLimited(it)) boardNextPull = maxOf(boardNextPull, System.currentTimeMillis() + repository.retryDelayMs(it, 10_000L))
+            }
             boardLoading = false
+            boardInFlight = false
             // Faces for the top of each board; the rest load as their rows scroll in.
             AvatarImages.prefetch((scoreBoard.take(30) + killBoard.take(30)).map { it.avatarUrl })
         }
@@ -375,6 +395,22 @@ internal object Social {
                 unreadDm = it.sumOf { row -> row.unread }
             }
             refreshFollowing()
+        }
+    }
+
+    fun refreshVisible() {
+        val page = top
+        when {
+            page is Page.Player -> refreshPlayer(page.id)
+            page is Page.Leaderboard || (page == null && section == Section.LEADERBOARD) -> refreshLeaderboards()
+            page is Page.Profile || (page == null && section == Section.PROFILE) -> refreshProfile(force = true)
+            page is Page.Connections -> scope.launch {
+                runCatching { repository.connections(page.playerId, "followers") }.onSuccess { connectionsFollowers = it }
+                runCatching { repository.connections(page.playerId, "following") }.onSuccess { connectionsFollowing = it }
+            }
+            page == null && section == Section.CONNECTIONS -> loadOwnConnections()
+            chatOnScreen() != null -> pollChat()
+            else -> refreshConversations()
         }
     }
 
@@ -617,11 +653,25 @@ internal object Social {
         FriendPresence.sharing = player.shareActivity
         cache.switchAccount(player.id)
         cache.saveProfile(player)
+        cache.savePlayer(player)
+        if (viewedPlayer?.id == player.id) viewedPlayer = player
+        fun List<ApiPlayer>.updated() = map { if (it.id == player.id) player else it }
+        scoreBoard = scoreBoard.updated(); killBoard = killBoard.updated()
+        followers = followers.updated(); following = following.updated()
+        connectionsFollowers = connectionsFollowers.updated(); connectionsFollowing = connectionsFollowing.updated()
+        if (scoreBoard.isNotEmpty()) cache.saveLeaderboard("score", scoreBoard)
+        if (killBoard.isNotEmpty()) cache.saveLeaderboard("kills", killBoard)
+        fun List<ChatMessage>.updatedMessages() = map { if (it.authorId == player.id) it.copy(authorName = player.displayName,
+            authorUsername = player.username.orEmpty(), authorAvatarUrl = player.avatarUrl, authorAvatarKey = player.avatarKey) else it }
+        globalMessages = globalMessages.updatedMessages(); threadMessages = threadMessages.updatedMessages()
+        TrailsStore.updateAuthor(player)
     }
 
     fun openEditProfile() {
         formError = ""
         renameAllowance = null
+        Account.player?.let { profileDraft = com.wyrm.omrajput.ui.ProfileEditDraft(it.displayName, it.ingameName.orEmpty(), it.username.orEmpty(), it.bio) }
+        if (ShellNav.tab.value == Tab.Settings) { pages.clear(); SettingsProfile.editing = true }
         push(Page.EditProfile)
         scope.launch { runCatching { repository.renameAllowance() }.onSuccess { renameAllowance = it } }
     }
@@ -635,8 +685,8 @@ internal object Social {
             runCatching {
                 repository.updateProfile(
                     displayName = displayName,
-                    // An empty arena name would fail the 3–20 rule; leave it untouched.
-                    ingameName = ingameName.trim().takeIf { it.isNotEmpty() },
+                    // The lobby owns the in-game name.
+                    ingameName = null,
                     username = username,
                     bio = bio,
                     avatarKey = me.avatarKey,
@@ -665,6 +715,7 @@ internal object Social {
                 if (photoFromProfile) photoError = formError
                 return@launch
             }
+            if (ShellNav.tab.value == Tab.Settings && !SettingsProfile.editing) { pages.clear(); SettingsProfile.editing = true }
             push(Page.Crop(photo))
         }
     }

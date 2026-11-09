@@ -1,5 +1,8 @@
 package com.wyrm.desktop
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Text
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,7 +33,7 @@ fun main(args: Array<String>) {
     PresetPreviews.loadBundled()
     val home = what != null && what.startsWith("HOME")
     val settingsShot = what != null && what.startsWith("SETTINGS")
-    if (settingsShot) {
+    if (settingsShot && what != "SETTINGS_EDIT") {
         // A few rows as the engine describes them (android_settings.c), for the look only.
         fun row(id: String, group: String, type: String, label: String, raw: String, min: Float, max: Float, options: String = "") =
             com.wyrm.omrajput.data.Setting(id, group, com.wyrm.omrajput.data.SettingType.of(type), label, "", raw, min, max, options.split('|').filter { it.isNotEmpty() })
@@ -63,6 +66,12 @@ fun main(args: Array<String>) {
     // SOCIAL / SOCIAL_<page> / TRAILS: sample people, chats and trails (D5); nothing is fetched.
     val social = what != null && (what.startsWith("SOCIAL") || what.startsWith("TRAILS"))
     if (social) socialPreview(what!!)
+    if (what == "SETTINGS_EDIT") {
+        socialPreview("SOCIAL_EDIT")
+        SettingsPageShot.open = SettingsPage.PROFILE
+        SettingsProfile.editing = true
+        ShellNav.tab.value = Tab.Settings
+    }
     // SETUP_*: Wyrm Setup's screens in its 760 x 480 window.
     if (what != null && what.startsWith("SETUP_")) {
         val (mode, stage, p) = when (what) {
@@ -113,7 +122,7 @@ fun main(args: Array<String>) {
             skin = com.wyrm.omrajput.data.TrailSkin(true, 3, "abcdefgh", List(8) { 0 }, -1, com.wyrm.omrajput.data.TrailSkinLook(-1, 0.5f, -1, -1)),
         ))
     }
-    if (what != null && what != "AUTH" && what != "AUTH_SMALL" && what != "SYNC" && what != "LOBBY" && what != "TEAM" && !home && !settingsShot && !social && what != "SKIN_TRIAL") lastSection = Section.valueOf(what)
+    if (what != null && !what.startsWith("DIALOG_") && what != "AUTH" && what != "AUTH_SMALL" && what != "SYNC" && what != "LOBBY" && what != "TEAM" && !home && !settingsShot && !social && what != "SKIN_TRIAL") lastSection = Section.valueOf(what)
     HomeState.pickerOpen = what == "HOME_PICKER"
     HomeState.alertsOpen = what == "HOME_ALERTS"
     if (what == "HOME_ALERTS") {
@@ -143,9 +152,21 @@ fun main(args: Array<String>) {
     // The whole window now (no Windows title bar): Wyrm's strip on top, as Main.kt draws it.
     val frame = runCatching { java.awt.Frame() }.getOrNull()
     val scene = ImageComposeScene(if (small) 860 else 1280, tall ?: if (small) 540 else 800, Density(1f)) {
+      androidx.compose.runtime.CompositionLocalProvider(
+          com.wyrm.omrajput.ui.LocalCentredDialogs provides true,
+      ) {
       Box(Modifier.fillMaxSize().background(Wyrm.Paper)) {
         Box(Modifier.fillMaxSize().padding(top = if (small || what == "SYNC") 0.dp else TitleStripHeight)) {
             when (what) {
+                "DIALOG_DELETE" -> {
+                    Column(Modifier.fillMaxSize().padding(60.dp)) {
+                        Text("Settings · Profile", fontFamily = Wyrm.Body, color = Wyrm.Ink)
+                    }
+                    com.wyrm.omrajput.ui.IosActionSheet("Delete your Wyrm account? This cannot be undone.", listOf(
+                        com.wyrm.omrajput.ui.IosSheetAction("Delete account", destructive = true) {}
+                    ), 0.dp) {}
+                }
+                "DIALOG_LOGOUT" -> com.wyrm.omrajput.ui.LogOutSheet(true, "Fixture player", "@fixture", "", "mono-ink", 0.dp, {}, {})
                 "SYNC" -> com.wyrm.omrajput.ui.WyrmSessionTransition("Syncing your Wyrm…")
                 "TEAM" -> TeamPage(onBack = {})
                 "LOBBY" -> { HomeState.selected = "148.113.20.151:443"; HomeState.nickname = "Om"; DesktopLobby() }
@@ -182,6 +203,7 @@ fun main(args: Array<String>) {
             }
         }
         if (frame != null) TitleStrip(frame, compact = small, onClose = {})
+      }
       }
     }
     val moments = if (what == "AUTH" || what == "AUTH_SMALL" || what == "SYNC") listOf(600L, 1500L, 2400L, 4200L) else listOf(4000L)

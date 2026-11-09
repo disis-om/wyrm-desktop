@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -39,6 +40,8 @@ class SkinTextures(
     val wyrmBeads: Map<Int, ImageBitmap> = emptyMap(),
     val looks: Map<Int, ImageBitmap> = emptyMap(),
     val lookThumbnails: Map<Int, ImageBitmap> = emptyMap(),
+    /** Wyrm skins (`WyrmSkins`): each skin's picture, by its number. */
+    val wyrmSkins: Map<Int, ImageBitmap> = emptyMap(),
 ) {
     companion object {
         private val lock = Mutex()
@@ -166,8 +169,12 @@ class SkinTextures(
             val airWheel = decode("textures/air_colour_wheel.png", 768)?.bitmap()
             val accessories = mutableMapOf<Int, ImageBitmap>()
             val accessoryThumbs = mutableMapOf<Int, ImageBitmap>()
+            // Accessories at the atlas's own size (OM, 2026-10-19: they were
+            // blurry): their cells are 112 px there, 56 in the halved copy the
+            // beads come from.
+            val sharp = decode("textures/tex_atlas_8k.png", 8192) ?: atlas
             for (id in 0 until 32) {
-                val cell = crop(atlas, 5.0 / 7 + (id % 8) / 28.0, 8.0 / 9 + (id / 8) / 36.0, 1.0 / 28, 1.0 / 36) ?: continue
+                val cell = crop(sharp, 5.0 / 7 + (id % 8) / 28.0, 8.0 / 9 + (id / 8) / 36.0, 1.0 / 28, 1.0 / 36) ?: continue
                 accessories[id] = cell.bitmap()
                 accessoryThumbs[id] = removingSoftShadow(cell).bitmap()
             }
@@ -185,16 +192,44 @@ class SkinTextures(
                 val path = background.asset ?: return@mapNotNull null
                 decode(path, 520)?.let { background.id to it.bitmap() }
             }.toMap()
-            val lookSheet = decode("textures/wyrm_accessories.png", 2048)
+            val lookSheet = decode("textures/wyrm_accessories.png", 8192)
             val lookCells = if (lookSheet == null) emptyMap() else (0 until 40).mapNotNull { cell ->
                 crop(lookSheet, (cell % 8) / 8.0, (cell / 8) / 8.0, 1.0 / 8, 1.0 / 8)?.let { cell to it }
             }.toMap()
             val looks = lookCells.mapValues { it.value.bitmap() }
             val lookThumbs = lookCells.mapNotNull { (cell, image) -> lookThumbnail(image)?.let { cell to it.bitmap() } }.toMap()
-            return SkinTextures(beads, airBeads, airShadow, airWheel, accessories, accessoryThumbs, tags, tagThumbs, backgrounds, wyrmBeads, looks, lookThumbs)
+            // Wyrm skins (OM, 2026-10-13): a WebP sheet, which ImageIO cannot read; Skia can.
+            val wyrmSkins = runCatching {
+                val sheet = org.jetbrains.skia.Bitmap.makeFromImage(
+                    org.jetbrains.skia.Image.makeFromEncoded(File(res, "textures/wyrm_skins.webp").readBytes()))
+                val cw = sheet.width / WyrmSkins.SHEET_COLUMNS
+                val ch = sheet.height / WyrmSkins.SHEET_ROWS
+                WyrmSkins.all.withIndex().mapNotNull { (cell, skin) ->
+                    val part = org.jetbrains.skia.Bitmap()
+                    val x = (cell % WyrmSkins.SHEET_COLUMNS) * cw
+                    val y = (cell / WyrmSkins.SHEET_COLUMNS) * ch
+                    if (sheet.extractSubset(part, org.jetbrains.skia.IRect.makeXYWH(x, y, cw, ch)))
+                        skin.number to part.asComposeImageBitmap()
+                    else null
+                }.toMap()
+            }.getOrDefault(emptyMap())
+            return SkinTextures(beads, airBeads, airShadow, airWheel, accessories, accessoryThumbs, tags, tagThumbs, backgrounds, wyrmBeads, looks, lookThumbs, wyrmSkins)
         }
     }
 }
+
+/** A Wyrm skin's moving preview (OM, 2026-10-13), as Wyrm Android's. */
+@Composable
+internal fun rememberWyrmSkinFrames(number: Int): State<ImageBitmap?> =
+    produceState<ImageBitmap?>(initialValue = null, number) {
+        value = if (number <= 0) null else withContext(Dispatchers.IO) {
+            runCatching {
+                val root = File(System.getProperty("wyrm.android.root") ?: ".", "app/res")
+                org.jetbrains.skia.Bitmap.makeFromImage(org.jetbrains.skia.Image.makeFromEncoded(
+                    File(root, "textures/wyrm_skins_live/$number.webp").readBytes())).asComposeImageBitmap()
+            }.getOrNull()
+        }
+    }
 
 @Composable
 fun rememberSkinTextures(): State<SkinTextures?> =

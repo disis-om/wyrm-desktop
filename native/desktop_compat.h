@@ -26,6 +26,20 @@ void wyrm_desktop_apply_size(void* sdl_window);
 void wyrm_desktop_publish_frame(const void* pixels, int width, int height,
                                 int stride, int bgra);
 
+/* Direct presentation (2026-11-05, desktop_bridge.c): the HWND the shell asks
+   the engine to present to (NULL = hidden window + readback), the one in use,
+   and the Vulkan surface for it (`instance` is a VkInstance, `surface` a
+   VkSurfaceKHR*; void here so this header needs no Vulkan). */
+void* wyrm_desktop_target_wanted(void);
+void* wyrm_desktop_target_hwnd(void);
+void wyrm_desktop_target_set_active(void* hwnd);
+int wyrm_desktop_direct(void);
+int wyrm_desktop_create_surface(void* sdl_window, void* instance, void* surface);
+/* The laser's shell-side conditions, and the hint line (engine draws both in
+   a direct match). */
+int wyrm_desktop_laser_wanted(int assist);
+void wyrm_desktop_draw_hint(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -34,9 +34,9 @@ def patch(rel, pairs):
 # Assets are read from disk on a desktop (the working folder is Wyrm Android's
 # root, which holds app/res); the APK extraction path stays Android's.
 patch("thermite/src/platform/tassets.c", [
-    ("defined(VLITHER_ANDROID) && !defined(WYRM_DESKTOP)",
-     "#include \"tassets.h\"\n\n#ifdef VLITHER_ANDROID\n",
-     "#include \"tassets.h\"\n\n/* Wyrm Desktop reads app/res straight from disk. */\n#if defined(VLITHER_ANDROID) && !defined(WYRM_DESKTOP)\n"),
+    ("defined(WYRM_SDL_JNI) && !defined(WYRM_DESKTOP)",
+     "#include \"tassets.h\"\n\n#ifdef WYRM_SDL_JNI\n",
+     "#include \"tassets.h\"\n\n/* Wyrm Desktop reads app/res straight from disk. */\n#if defined(WYRM_SDL_JNI) && !defined(WYRM_DESKTOP)\n"),
 ])
 
 # The window: hidden, resizable, the size Compose asks for. Compose shows the
@@ -79,23 +79,23 @@ patch("thermite/src/framework/twindow.c", [
   return window;"""),
     ("wyrm_desktop_apply_size(window->handle)",
      """void twindow_poll_input(twindow* window) {
-#ifdef VLITHER_ANDROID
+#ifdef WYRM_SDL_JNI
   SDL_Event event;""",
      """void twindow_poll_input(twindow* window) {
 #ifdef WYRM_DESKTOP
   wyrm_desktop_apply_size(window->handle);
 #endif
-#ifdef VLITHER_ANDROID
+#ifdef WYRM_SDL_JNI
   SDL_Event event;"""),
     ("WYRM_DESKTOP: Compose owns full screen",
      """void twindow_toggle_fullscreen(twindow* window) {
-#ifdef VLITHER_ANDROID
+#ifdef WYRM_SDL_JNI
   SDL_SetWindowFullscreen(window->handle, true);""",
      """void twindow_toggle_fullscreen(twindow* window) {
 #if defined(WYRM_DESKTOP)
   /* WYRM_DESKTOP: Compose owns full screen; the hidden window never goes. */
   (void)window;
-#elif defined(VLITHER_ANDROID)
+#elif defined(WYRM_SDL_JNI)
   SDL_SetWindowFullscreen(window->handle, true);"""),
 ])
 
@@ -292,14 +292,14 @@ patch("app/src/mobile/mobile_controls.c", [
 """),
     ("WYRM_DESKTOP: mouse and keyboard; no touch controls are drawn",
      """void mobile_controls_draw_gameplay(tenv* env) {
-#ifdef VLITHER_ANDROID""",
+#ifdef WYRM_SDL_JNI""",
      """void mobile_controls_draw_gameplay(tenv* env) {
 #ifdef WYRM_DESKTOP
   /* WYRM_DESKTOP: mouse and keyboard; no touch controls are drawn. */
   (void)env;
   return;
 #endif
-#ifdef VLITHER_ANDROID"""),
+#ifdef WYRM_SDL_JNI"""),
 ])
 
 # Frame pacing: the hidden window does not hold presents to the display, so the

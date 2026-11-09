@@ -21,6 +21,12 @@ kotlin {
 // copied into this repo. Grow this list screen by screen.
 val androidSrc = file("../../Wyrm Android/android/app/src/main/java")
 val sharedAndroidFiles = listOf(
+    "com/wyrm/omrajput/i18n/Text.kt",
+    "com/wyrm/omrajput/data/WyrmEvents.kt",
+    "com/wyrm/omrajput/ui/NoticeBlocks.kt",
+    "com/wyrm/omrajput/ui/AndroidSkinWardrobe.kt",
+    "com/wyrm/omrajput/ui/WardrobeMotion.kt",
+    "com/wyrm/omrajput/ui/WardrobeIcons.kt",
     "com/wyrm/omrajput/data/ArenaDirectory.kt",
     "com/wyrm/omrajput/data/WyrmSettings.kt",
     // Accounts: the backend client and its models (Google sign-in stays Android's).
@@ -46,6 +52,9 @@ val sharedAndroidFiles = listOf(
     "com/wyrm/omrajput/ui/NearOriginal.kt",
     // The design system: Paper colours, fonts, iOS kit, Liquid Glass.
     "com/wyrm/omrajput/ui/WyrmSurface.kt",
+    "com/wyrm/omrajput/ui/WyrmThemeTables.kt",
+    "com/wyrm/omrajput/ui/WyrmColourScope.kt",
+    "com/wyrm/omrajput/ui/SnakeNameSizeSetting.kt",
     "com/wyrm/omrajput/ui/IosKit.kt",
     "com/wyrm/omrajput/ui/IosGlyphs.kt",
     "com/wyrm/omrajput/ui/IosControls.kt",
@@ -63,6 +72,8 @@ val sharedAndroidFiles = listOf(
     "com/wyrm/omrajput/ui/WyrmLook.kt",
     "com/wyrm/omrajput/ui/TagTable.kt",
     "com/wyrm/omrajput/ui/WyrmTags.kt",
+    // Wyrm skins (OM, 2026-10-13): creatures and strip looks.
+    "com/wyrm/omrajput/ui/WyrmSkins.kt",
     // Team mode, NTL (D2, OM 2026-10-11): the service and the roster/chat look.
     // TeamVaultKey is the desktop's own (Windows DPAPI), not Android's Keystore one.
     "com/wyrm/omrajput/data/TeamService.kt",
@@ -105,10 +116,29 @@ val sharedAndroidFiles = listOf(
     "com/wyrm/omrajput/ui/NotificationSettingsScreen.kt",
     "com/wyrm/omrajput/ui/SupportScreens.kt",
     "com/wyrm/omrajput/ui/LogOutSheet.kt",
+    // OM's 2026-10-25 round: skin textures (Skin › Pattern), the developer's notice
+    // popup, and the custom arena id (sent to every arena since 2026-10-24).
+    "com/wyrm/omrajput/ui/SkinTexture.kt",
+    "com/wyrm/omrajput/data/Notices.kt",
+    "com/wyrm/omrajput/ui/NoticePopup.kt",
+    "com/wyrm/omrajput/data/CustomArenas.kt",
 )
 val syncAndroidSources by tasks.registering(Sync::class) {
     from(androidSrc) { include(sharedAndroidFiles) }
     into(layout.buildDirectory.dir("shared-android"))
+    doLast {
+        // Reuse current API models, without Android alarms/notifications.
+        val events = destinationDir.resolve("com/wyrm/omrajput/data/WyrmEvents.kt")
+        val text = events.readText()
+        val marker = "/* ---------------------------------------------------------------- reminders */"
+        check(text.contains(marker)) { "Event model/reminder boundary moved" }
+        events.writeText(text.substringBefore(marker).lineSequence().filterNot {
+            it.startsWith("import android.") || it.startsWith("import androidx.core.") ||
+                it == "import com.wyrm.omrajput.R" ||
+                it == "import com.wyrm.omrajput.WyrmActivity" ||
+                it == "import com.wyrm.omrajput.WyrmMessagingService"
+        }.joinToString("\n"))
+    }
 }
 sourceSets["main"].kotlin.srcDir(syncAndroidSources)
 
@@ -310,6 +340,32 @@ tasks.register<JavaExec>("shimProbe") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("com.wyrm.desktop.ShimProbeKt")
     jvmArgs("-Dwyrm.android.root=$wyrmAndroidRoot")
+}
+
+tasks.register<JavaExec>("desktopRoundProbe") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.wyrm.desktop.DesktopRoundProbe")
+    val data = layout.buildDirectory.dir("round-probe-appdata").get().asFile
+    doFirst { data.mkdirs() }
+    environment("APPDATA", data.absolutePath)
+    environment("LOCALAPPDATA", data.absolutePath)
+}
+
+tasks.register<JavaExec>("desktopLiveReadProbe") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.wyrm.desktop.DesktopLiveReadProbe")
+    jvmArgs("-Dwyrm.native.bin=$nativeBin", "-Dwyrm.probe.out=${file("../build").absolutePath}")
+}
+
+tasks.register<JavaExec>("desktopRoundShots") {
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.wyrm.desktop.DesktopRoundShots")
+    (findProperty("roundSection") as String?)?.let { args(it) }
+    jvmArgs("-Dwyrm.android.root=$wyrmAndroidRoot")
+    val data = layout.buildDirectory.dir("round-shots-appdata").get().asFile
+    doFirst { data.mkdirs() }
+    environment("APPDATA", data.absolutePath)
+    environment("LOCALAPPDATA", data.absolutePath)
 }
 
 // The keyboard path, checked with no window and no real input (KeyProbe.kt):

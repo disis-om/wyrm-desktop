@@ -236,6 +236,7 @@ internal fun SocialPage(page: Social.Page) {
             onPickPhoto = { Social.pickPhoto(fromProfile = false) },
             onRemovePhoto = Social::removePhoto,
             onDeleteAccount = Social::deleteAccount,
+            draft = Social.profileDraft,
         )
 
         is Social.Page.Crop -> PhotoCropScreen(

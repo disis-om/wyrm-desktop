@@ -49,6 +49,8 @@ internal object DesktopAccountSync {
     class PrefFile(val name: String, val scope: Scope, val keys: Set<String>? = null, val rest: Scope = Scope.WIPE)
 
     val FILES: List<PrefFile> = listOf(
+        PrefFile("wyrm_desktop_shortcuts", Scope.SYNC, setOf("CHAT", "CHAT_PANEL", "SEARCH", "REFRESH", "UNDO", "REDO", "CLEAR")),
+        PrefFile("wyrm_desktop_cursor", Scope.SYNC, setOf("style", "laser_normal")),
         // Synced: the player's choices on this computer.
         PrefFile("wyrm_ui_preferences", Scope.SYNC),            // theme, intensity, nickname_chosen
         PrefFile("wyrm_near_original", Scope.SYNC),             // also in the shared document
@@ -56,10 +58,11 @@ internal object DesktopAccountSync {
         PrefFile("wyrm_play_feel", Scope.SYNC),                 // Display › Look ahead (shared: lookAhead)
         PrefFile("wyrm_team_hud", Scope.SYNC),                  // roster + chat window look
         PrefFile("wyrm_skin_studio", Scope.SYNC),               // saved patterns
+        PrefFile("wyrm_saved_skins", Scope.SYNC),               // Skin › Saved skins (as Android)
         PrefFile("wyrm_saved_arenas", Scope.SYNC),
         PrefFile("wyrm_recent_arenas", Scope.SYNC),
         PrefFile("wyrm_notification_preferences", Scope.SYNC),
-        PrefFile("wyrm_desktop_performance", Scope.SYNC),       // frame cap, vsync
+        PrefFile("wyrm_desktop_performance", Scope.WIPE),       // Performance page gone (2026-10-19): nothing kept
         PrefFile("wyrm_desktop_updates", Scope.SYNC, keys = setOf("beta"), rest = Scope.KEEP), // Beta updates
         // Run receipts not yet uploaded: carried by the account so none is lost.
         PrefFile("wyrm_pending_runs", Scope.SYNC),
@@ -76,6 +79,8 @@ internal object DesktopAccountSync {
         PrefFile("wyrm_account_sync", Scope.WIPE),              // an owed restore, per account
         // About this computer: kept.
         PrefFile("wyrm_desktop_window", Scope.KEEP),            // full screen
+        PrefFile("wyrm_custom_arena", Scope.KEEP),              // custom arena id: this computer's own (2026-10-24)
+        PrefFile("wyrm_notice", Scope.KEEP),                   // the developer's notice this computer was shown (2026-10-25)
     )
 
     /** Old preference key -> new, per file, for documents saved by older builds. */
@@ -189,6 +194,19 @@ internal object DesktopAccountSync {
         reported["assist.spine_width"]?.let { doc.put("spineWidthAssist", it.number.coerceIn(0f, 1f).toDouble()) }
         reported["normal.snake_shadow"]?.let { doc.put("snakeShadowNormal", it.number >= 0.5f) }
         reported["assist.snake_shadow"]?.let { doc.put("snakeShadowAssist", it.number >= 0.5f) }
+        // As the phones (WyrmOverlay sharedSettingsDocument): Wyrm skin, spine and boost
+        // on my snake only, food and skin textures (2026-10-25).
+        reported["skin.wyrm"]?.let { doc.put("wyrmSkin", it.number.toInt().coerceIn(0, 255)) }
+        reported["normal.spine_mine"]?.let { doc.put("spineMineNormal", it.number >= 0.5f) }
+        reported["assist.spine_mine"]?.let { doc.put("spineMineAssist", it.number >= 0.5f) }
+        reported["normal.boost_own"]?.let { doc.put("boostOwnNormal", it.number >= 0.5f) }
+        reported["assist.boost_own"]?.let { doc.put("boostOwnAssist", it.number >= 0.5f) }
+        reported["normal.food_texture"]?.let { doc.put("foodTextureNormal", it.number.toInt().coerceIn(0, 5)) }
+        reported["assist.food_texture"]?.let { doc.put("foodTextureAssist", it.number.toInt().coerceIn(0, 5)) }
+        reported["skin.texture"]?.let { doc.put("skinTexture", it.number.toInt().coerceIn(0, 4)) }
+        reported["skin.texture_mine"]?.let { doc.put("skinTextureMine", it.number >= 0.5f) }
+        // The custom arena id is each device's own since 2026-10-24: never in the account.
+        doc.remove("customArenaId")
         return doc
     }
 
@@ -209,7 +227,11 @@ internal object DesktopAccountSync {
             rows.keys().forEach { stored ->
                 val key = renames[stored] ?: stored
                 val value = rows.optJSONArray(stored)?.let(::text)
-                if (value == null || (file.keys != null && key !in file.keys)) skipped++ else { editor.putString(key, value); applied++ }
+                if (value == null || (file.keys != null && key !in file.keys) ||
+                    (name == "wyrm_desktop_shortcuts" && !DesktopShortcuts.valid(key, value)) ||
+                    (name == "wyrm_desktop_cursor" && key == "style" && value != "system" && DesktopCursors.styles.none { it.id == value }) ||
+                    (name == "wyrm_desktop_cursor" && key == "laser_normal" && value.toBooleanStrictOrNull() == null)) skipped++
+                else { editor.putString(key, value); applied++ }
             }
             editor.commit()
         }
@@ -253,6 +275,8 @@ internal object DesktopAccountSync {
                 applied++
             }
         }
+        DesktopCursors.reload()
+        DesktopShortcuts.reload()
         return Report(applied, skipped)
     }
 
@@ -307,6 +331,16 @@ internal object DesktopAccountSync {
         }
         bool("snakeShadowNormal", "normal.snake_shadow")
         bool("snakeShadowAssist", "assist.snake_shadow")
+        // A missing or unknown value keeps this computer's (per key, as the phones).
+        if (doc.has("wyrmSkin")) doc.optInt("wyrmSkin", -1).takeIf { it in 0..255 }?.let { writeSetting("skin.wyrm", floatArrayOf(it.toFloat())) }
+        bool("spineMineNormal", "normal.spine_mine")
+        bool("spineMineAssist", "assist.spine_mine")
+        (doc.opt("boostOwnNormal") as? Boolean)?.let { writeSetting("normal.boost_own", floatArrayOf(if (it) 1f else 0f)) }
+        (doc.opt("boostOwnAssist") as? Boolean)?.let { writeSetting("assist.boost_own", floatArrayOf(if (it) 1f else 0f)) }
+        (doc.opt("foodTextureNormal") as? Number)?.toInt()?.takeIf { it in 0..5 }?.let { writeSetting("normal.food_texture", floatArrayOf(it.toFloat())) }
+        (doc.opt("foodTextureAssist") as? Number)?.toInt()?.takeIf { it in 0..5 }?.let { writeSetting("assist.food_texture", floatArrayOf(it.toFloat())) }
+        (doc.opt("skinTexture") as? Number)?.toInt()?.takeIf { it in 0..4 }?.let { writeSetting("skin.texture", floatArrayOf(it.toFloat())) }
+        (doc.opt("skinTextureMine") as? Boolean)?.let { writeSetting("skin.texture_mine", floatArrayOf(if (it) 1f else 0f)) }
     }
 
     /** Stores that read their files once: read them again after a restore or a wipe. */
@@ -319,6 +353,8 @@ internal object DesktopAccountSync {
         NearOriginalStore.reload(DesktopContext)
         JoystickLaserStore.reload(DesktopContext)
         TeamHudStore.reload(DesktopContext)
+        DesktopCursors.reload()
+        DesktopShortcuts.reload()
         com.wyrm.omrajput.ui.PlayFeelStore.reload(DesktopContext)
         com.wyrm.omrajput.data.DropWatch.reloadPrefs()
         com.wyrm.omrajput.data.CrashWatch.reloadPrefs()
