@@ -3,15 +3,15 @@
   "productName": "Wyrm",
   "packageName": "com.wyrm.desktop",
   "platform": "windows",
-  "versionCode": 100,
-  "versionName": "1.0.0",
+  "versionCode": 120,
+  "versionName": "1.2.0",
   "minimumVersionCode": 0,
   "mandatory": false,
-  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.0.0/WyrmSetup-1.0.0.exe",
-  "setupSize": 103793897,
-  "sha256": "9cd97d4073e234c92b3a00ee673c3209d972db109d4eb0a3b42abc21bade03b8",
-  "publishedAt": "2026-10-11T22:23:09Z",
+  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.2.0/WyrmSetup-1.2.0.exe",
+  "setupSize": 121043520,
+  "sha256": "81eb6d4b0a847d52d8407b26302c85cef419f416804317658ddf19e4e14294a7",
+  "publishedAt": "2026-11-11T21:06:08Z",
   "headline": "A new version of Wyrm",
   "author": "OM Rajput",
-  "releaseNotes": ["The first Wyrm for Windows", "The same engine, skins, Trails and Social as the phones", "Your settings follow your account", "Updates from inside Wyrm (Settings \u00e2\u20ac\u00ba Version)"]
+  "releaseNotes": ["This is the stable release after the beta release.", "It is not the official release yet: it is being tested now, and the next version will be the final official release.", "Still, this version is good to go."]
 }
