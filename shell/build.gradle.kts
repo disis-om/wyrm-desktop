@@ -122,6 +122,18 @@ val sharedAndroidFiles = listOf(
     "com/wyrm/omrajput/data/Notices.kt",
     "com/wyrm/omrajput/ui/NoticePopup.kt",
     "com/wyrm/omrajput/data/CustomArenas.kt",
+    // Settings › Account information (Android 8.6.5, OM 2026-11-11): recovery
+    // email, stats and change password. ProfileScreen.kt for its WyrmProfile.
+    "com/wyrm/omrajput/ui/ProfileScreen.kt",
+    "com/wyrm/omrajput/ui/AccountInfoScreen.kt",
+    // Settings › Display › Minimap icons (OM 2026-11-08): NTL `di` + Wyrm friends icon.
+    "com/wyrm/omrajput/data/MinimapIcons.kt",
+    "com/wyrm/omrajput/ui/WyrmExtras.kt",
+    "com/wyrm/omrajput/ui/MinimapIconsSettings.kt",
+    // Chat as Android (OM 2026-11-11): Discord-style markdown, link embeds,
+    // replies, reactions, pins, GIFs (the GIF view is replaced below).
+    "com/wyrm/omrajput/ui/WyrmChat.kt",
+    "com/wyrm/omrajput/ui/ChatMarkdown.kt",
 )
 val syncAndroidSources by tasks.registering(Sync::class) {
     from(androidSrc) { include(sharedAndroidFiles) }
@@ -137,6 +149,41 @@ val syncAndroidSources by tasks.registering(Sync::class) {
                 it == "import com.wyrm.omrajput.R" ||
                 it == "import com.wyrm.omrajput.WyrmActivity" ||
                 it == "import com.wyrm.omrajput.WyrmMessagingService"
+        }.joinToString("\n"))
+        // WyrmChat.kt plays GIFs through Android's ImageView/ImageDecoder: the
+        // desktop decodes the same bytes with Skia's Codec and steps its frames.
+        val chat = destinationDir.resolve("com/wyrm/omrajput/ui/WyrmChat.kt")
+        var chatText = chat.readText().replace("\r\n", "\n")
+        val gifStart = "@Composable\ninternal fun RemoteAnimatedImage("
+        val gifEnd = "/** A direct thread's header"
+        check(chatText.contains(gifStart) && chatText.contains(gifEnd)) { "WyrmChat GIF view moved" }
+        chatText = chatText.substringBefore(gifStart) + """@Composable
+internal fun RemoteAnimatedImage(url: String, modifier: Modifier = Modifier, crop: Boolean = false) {
+    val wyrmScopedPalette = LocalWyrmPalette.current ?: Wyrm.currentPalette
+    var bytes by remember(url) { mutableStateOf(ChatGifBytes.cache.get(url)) }
+    LaunchedEffect(url) { if (bytes == null) bytes = ChatGifBytes.load(url) }
+    val data = bytes
+    val frames = remember(data) { data?.let { com.wyrm.desktop.DesktopGif.decode(it) } }
+    if (frames == null || frames.images.isEmpty()) {
+        Box(modifier.background(wyrmScopedPalette.well).size(160.dp, 110.dp))
+        return
+    }
+    var index by remember(frames) { mutableStateOf(0) }
+    LaunchedEffect(frames) {
+        if (frames.images.size > 1) while (true) {
+            kotlinx.coroutines.delay(frames.durations[index].coerceAtLeast(20).toLong())
+            index = (index + 1) % frames.images.size
+        }
+    }
+    androidx.compose.foundation.Image(frames.images[index], contentDescription = null, modifier = modifier,
+        contentScale = if (crop) androidx.compose.ui.layout.ContentScale.Crop else androidx.compose.ui.layout.ContentScale.Fit)
+}
+
+""" + gifEnd + chatText.substringAfter(gifEnd)
+        chat.writeText(chatText.lineSequence().filterNot {
+            it == "import android.graphics.ImageDecoder" || it == "import android.graphics.drawable.AnimatedImageDrawable" ||
+                it == "import android.widget.ImageView" || it == "import android.os.Build" ||
+                it == "import androidx.compose.ui.viewinterop.AndroidView"
         }.joinToString("\n"))
     }
 }
@@ -309,6 +356,11 @@ tasks.named<ProcessResources>("processResources") {
     from(file("../../Wyrm Android/PRIVACY.md")) {
         into("assets")
         rename { "privacy.md" }
+    }
+    // AIR art + minimap icon sheet (Settings › Display › Minimap icons), as Android's assets.
+    from(file("../../Wyrm Android/app/res/textures")) {
+        include("wyrm_extras.png", "wyrm_extras.json")
+        into("assets/textures")
     }
     // About Wyrm's UPI QR, the same picture the phones show.
     from(file("../../Wyrm Android/android/app/src/main/res/drawable-nodpi/about_upi_qr.png")) {

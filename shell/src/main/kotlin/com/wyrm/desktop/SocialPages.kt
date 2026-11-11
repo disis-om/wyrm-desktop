@@ -111,40 +111,11 @@ internal fun SocialPage(page: Social.Page) {
             onJoin = Social::joinFriendArena,
         )
 
-        Social.Page.Global -> IosGlobalChatScreen(
-            messages = Social.globalMessages,
-            meId = me?.id.orEmpty(),
-            draft = Social.draft,
-            sending = Social.sending,
-            error = Social.chatError,
-            insetTop = PageInsetTop,
-            insetBottom = PageInsetBottom,
-            onDraftChange = { Social.draft = it },
-            onSend = Social::sendGlobal,
-            onBack = Social::back,
-            onOpenAuthor = Social::openPlayer,
-            onReport = { message, reason -> Social.reportMessage(message, reason) },
-        )
+        Social.Page.Global -> DesktopGlobalChat(insetTop = PageInsetTop, insetBottom = PageInsetBottom, onBack = Social::back)
 
         is Social.Page.Thread -> {
             val peer = Social.threadPlayer?.takeIf { it.id == page.player.id } ?: page.player
-            IosThreadScreen(
-                title = peer.displayName,
-                messages = Social.threadMessages,
-                meId = me?.id.orEmpty(),
-                draft = Social.draft,
-                sending = Social.sending,
-                error = Social.chatError,
-                insetTop = PageInsetTop,
-                insetBottom = PageInsetBottom,
-                onDraftChange = { Social.draft = it },
-                onSend = Social::sendDirect,
-                onBack = Social::back,
-                peer = peer,
-                onPeer = { Social.openPlayer(peer.id) },
-                activity = FriendPresence.of(peer.id),
-                onJoin = Social::joinFriendArena,
-            )
+            DesktopThreadChat(peer, insetTop = PageInsetTop, insetBottom = PageInsetBottom, onBack = Social::back)
         }
 
         is Social.Page.Player -> {

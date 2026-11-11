@@ -180,6 +180,8 @@ void wyrm_desktop_initial_size(int* width, int* height) {
 }
 
 void wyrm_desktop_apply_size(void* sdl_window) {
+  /* The game window on screen has its own size (the player's). */
+  if (wyrm_desktop_native_shown()) return;
   int w = SDL_GetAtomicInt(&want_w);
   int h = SDL_GetAtomicInt(&want_h);
   if (w <= 0 || h <= 0 || !sdl_window) return;
@@ -307,10 +309,17 @@ void* wyrm_desktop_target_hwnd(void) {
 void wyrm_desktop_target_set_active(void* hwnd) {
   atomic_ptr_set(&target_active_hi, &target_active_lo, hwnd);
 }
+/* desktop_ui.c: the game window asks to be presented to (its own HWND), or
+   NULL to go back to the hidden window. Applied by twindow.c this frame. */
+void wyrm_desktop_target_request(void* hwnd) {
+  atomic_ptr_set(&target_wanted_hi, &target_wanted_lo, hwnd);
+}
 int wyrm_desktop_direct(void) { return wyrm_desktop_target_hwnd() != NULL; }
+int wyrm_desktop_native_hover(void); /* desktop_ui.c */
 int wyrm_desktop_laser_wanted(int assist) {
-  return SDL_GetAtomicInt(&overlay_hover) != 0 &&
-         (assist || SDL_GetAtomicInt(&overlay_laser_normal) != 0);
+  int hover = wyrm_desktop_native_shown() ? wyrm_desktop_native_hover()
+                                          : SDL_GetAtomicInt(&overlay_hover) != 0;
+  return hover && (assist || SDL_GetAtomicInt(&overlay_laser_normal) != 0);
 }
 
 /* The Vulkan surface for the current target: the canvas (direct) or the

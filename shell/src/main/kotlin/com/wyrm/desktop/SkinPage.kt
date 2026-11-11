@@ -168,8 +168,49 @@ private class TryOn(private val scope: CoroutineScope) {
 @Suppress("UNUSED_PARAMETER")
 private fun Modifier.tryOn(tryOn: TryOn, apply: TryOn.() -> Unit): Modifier = this
 
+/**
+ * Skin, as Android's wardrobe (OM, 2026-11-11: "skin page ko bhi ab android
+ * jaisa"): the jiggling list of snakes (each runs the window's width, up to
+ * the whole 256-bead skin), Main.as's preset beads, antennas and tags, and the
+ * bottom bar with each button's name (Build, Accessories, Tags, ...). The same
+ * IosSkinScreen as the phone; the engine calls are the desktop's.
+ */
 @Composable
 fun SkinPage() {
+    LaunchedEffect(Unit) { Engine.skinOpened() }
+    val trial = SkinTrial.trial
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { SkinTrial.backToMine() } }
+    val settings = EngineSettings.settings
+    // One centred column as wide as the Build preview's snake (OM, 2026-11-11:
+    // "jitna wide snake ka preview hai utna wide hoga sab"): the list, the
+    // pickers and the bottom bar all fit it, never edge to edge.
+    Box(Modifier.fillMaxSize().padding(top = TopTabsClearance - 8.dp), contentAlignment = Alignment.TopCenter) {
+      Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
+        com.wyrm.omrajput.ui.IosSkinScreen(
+            state = trial?.skin ?: Engine.skin,
+            background = Engine.arenaBackground,
+            settings = settings,
+            insetTop = 0.dp,
+            onPickPreset = { index -> Engine.skinPreset(index) },
+            onCode = { code, colours -> Engine.skinCode(code, colours) },
+            onPickAccessory = { id -> Engine.skinAccessory(id) },
+            onPickBackground = { index -> Engine.skinBackground(index) },
+            onSettingChange = EngineSettings::write,
+            look = trial?.look,
+            banner = if (trial != null) ({
+                com.wyrm.omrajput.ui.SkinTrialBanner(trial.author, SkinTrial::wear, SkinTrial::backToMine)
+            }) else null,
+            onAdjustBackgroundSize = { Engine.openBackgroundEditor() },
+            wideScene = true,
+        )
+      }
+    }
+}
+
+/** The earlier desktop Skin page (stage on top, sections below), kept. */
+@Composable
+@Suppress("unused")
+internal fun SkinPageStage() {
     val textures by rememberSkinTextures()
     LaunchedEffect(Unit) { Engine.skinOpened() }
     val state = Engine.skin

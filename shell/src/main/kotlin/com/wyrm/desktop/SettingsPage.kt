@@ -97,10 +97,12 @@ internal enum class SettingsPage(val group: String, val title: String, val sub: 
     BOT("Playing help", "Bot", "When it circles, how wide it swings", LucideR.drawable.lucide_ic_bot),
     FOOD("Food", "Food style", "Original, rings and geometric shapes", LucideR.drawable.lucide_ic_cookie),
     PROFILE("Account", "Profile", "Name, username, scores", LucideR.drawable.lucide_ic_user_round),
+    ACCOUNT("Account", "Account information", "Recovery email, password and your stats", LucideR.drawable.lucide_ic_id_card),
     NOTIFICATIONS("Account", "Notifications", "Which alerts reach you as Windows notifications", LucideR.drawable.lucide_ic_bell),
     PRIVACY("Account", "Privacy", "Your activity, and what is stored", LucideR.drawable.lucide_ic_shield),
     THEMES("Accessibility", "Themes", "Light, dark and colour appearances", LucideR.drawable.lucide_ic_palette),
     VERSION("This computer", "Version", "Wyrm Desktop, its settings format and updates", LucideR.drawable.lucide_ic_info),
+    DEVELOPER("This computer", "Developer", "Developer Mode, swapchain images, diagnostics overlay", LucideR.drawable.lucide_ic_bug),
     HELP("Help", "Help & feedback", "Report a problem, ideas, your reports", LucideR.drawable.lucide_ic_circle_question_mark),
     ABOUT("About", "About Wyrm", "The story, the maker, and how to support", LucideR.drawable.lucide_ic_heart),
 }
@@ -213,7 +215,8 @@ private fun HeaderAction(label: String, icon: Int, onClick: () -> Unit) {
 private fun PageBody(page: SettingsPage) {
     val settings = EngineSettings.settings
     when (page) {
-        SettingsPage.DISPLAY -> SettingsDisplayScreen(settings, 0.dp, 0.dp, onBack = {}, onChange = EngineSettings::write)
+        SettingsPage.DISPLAY -> SettingsDisplayScreen(settings, 0.dp, 0.dp, onBack = {}, onChange = EngineSettings::write,
+            minimapIcons = { com.wyrm.omrajput.ui.MinimapIconsSection() })
         SettingsPage.MODES -> SettingsAssistScreen(
             settings = settings,
             insetTop = 0.dp,
@@ -254,7 +257,61 @@ private fun PageBody(page: SettingsPage) {
             LaunchedEffect(Unit) { Social.refreshProfile() }
             OwnProfilePane()
         }
+        // Settings › Account information (Android 8.6.5, OM 2026-11-11).
+        SettingsPage.ACCOUNT -> {
+            LaunchedEffect(Unit) { Social.refreshProfile() }
+            AccountInformationPane()
+        }
         SettingsPage.ABOUT -> DesktopPage { AboutPage() }
+        // Settings › Developer (Android 8.6.3's Diagnostics overlay, OM 2026-11-10).
+        SettingsPage.DEVELOPER -> DesktopPage {
+            // Developer Mode and Swapchain images (OM, 2026-11-12).
+            SettingsSectionLabel("Developer", top = 14.dp)
+            SettingsCard {
+                SettingsBoolRow(
+                    "Developer Mode",
+                    "Shows the testing options below. Off, Wyrm uses its normal settings.",
+                    on = DesktopDeveloper.on,
+                    first = true,
+                    onToggle = DesktopDeveloper::applyOn,
+                )
+            }
+            if (DesktopDeveloper.on) {
+                SettingsSectionLabel("Swapchain images")
+                SettingsCard {
+                    listOf(
+                        0 to "Same as Vlither (default)",
+                        2 to "2 images",
+                        3 to "3 images",
+                        4 to "4 images",
+                    ).forEachIndexed { index, (count, label) ->
+                        SettingsValueRow(
+                            label,
+                            if (DesktopDeveloper.swapImages == count) "Selected" else "",
+                            first = index == 0,
+                            onOpen = { DesktopDeveloper.applySwapImages(count) },
+                        )
+                    }
+                }
+                SettingsCaption(
+                    "How many pictures the game window keeps ready for your screen. 2: the least delay, but a frame " +
+                        "that is late waits a whole refresh, so motion can stutter. 3: Vlither's own count on Windows, " +
+                        "smooth with a little more delay. 4: the smoothest, the most delay. Changes at once in the " +
+                        "lobby and in a match. With Developer Mode off Wyrm always uses Vlither's.",
+                )
+            }
+            SettingsSectionLabel("Diagnostics")
+            SettingsCard {
+                SettingsBoolRow(
+                    "Diagnostics overlay",
+                    "A strip at the top of the lobby and the match: FPS and frame times, CPU and GPU share, what is drawn, ping and this computer's CPU and memory. Green is fine, orange and red show the problem.",
+                    on = DesktopDiagnostics.on,
+                    first = true,
+                    onToggle = DesktopDiagnostics::set,
+                )
+            }
+            SettingsCaption("Nothing is sent anywhere. Saved with your account for Wyrm Desktop only.")
+        }
         SettingsPage.VERSION -> DesktopPage {
             SettingsSectionLabel("Wyrm Desktop", top = 14.dp)
             SettingsCard {
@@ -305,6 +362,55 @@ private fun UpdatesSection() {
 }
 
 /** A desktop-only page, in the same cards and spacing as Android's. */
+@Composable
+private fun AccountInformationPane() {
+    val player = Account.player
+    if (player == null) {
+        DesktopPage {
+            SettingsCaption("Log in to see your account information.")
+        }
+        return
+    }
+    val repository = Account.repository
+    com.wyrm.omrajput.ui.AccountInfoScreen(
+        profile = com.wyrm.omrajput.ui.WyrmProfile(
+            id = player.id,
+            displayName = player.displayName,
+            ingameName = player.ingameName.orEmpty(),
+            username = player.username.orEmpty(),
+            bio = player.bio,
+            avatarKey = player.avatarKey,
+            avatarUrl = player.avatarUrl,
+            highestScore = player.highestScore,
+            kills = player.kills,
+            followerCount = player.followerCount,
+            followingCount = player.followingCount,
+            memberSince = player.createdAt,
+        ),
+        lobbyName = Engine.savedNickname,
+        insetTop = 0.dp,
+        insetBottom = 0.dp,
+        onBack = {},
+        onEditProfile = {
+            lastPage = SettingsPage.PROFILE
+            Social.openEditProfile()
+        },
+        loadEmail = { runCatching { repository.recoveryEmail() } },
+        startEmail = { email -> runCatching { repository.startRecoveryEmail(email) } },
+        verifyEmail = { id, code -> runCatching { repository.verifyRecoveryEmail(id, code) } },
+        useVoiceEmail = { runCatching { repository.useVoiceEmailForRecovery() } },
+        changePassword = { current, next ->
+            runCatching { repository.changePassword(current, next) }.fold(
+                onSuccess = { null },
+                onFailure = { error ->
+                    if (error.message == "WRONG_PASSWORD") "Your current password is not right."
+                    else com.wyrm.omrajput.ui.friendlyRecoveryError(error)
+                },
+            )
+        },
+    )
+}
+
 @Composable
 private fun DesktopPage(content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) { content() }

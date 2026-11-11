@@ -52,6 +52,16 @@ public final class Bitmap {
         return new Bitmap(new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB));
     }
 
+    /** A copy of a rectangle of the source (WyrmExtras cuts its icons out of one sheet). */
+    public static Bitmap createBitmap(Bitmap source, int x, int y, int width, int height) {
+        BufferedImage out = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = out.createGraphics();
+        g.setComposite(java.awt.AlphaComposite.Src);
+        g.drawImage(source.image, -x, -y, null);
+        g.dispose();
+        return new Bitmap(out);
+    }
+
     public static Bitmap createScaledBitmap(Bitmap src, int width, int height, boolean filter) {
         BufferedImage out = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = out.createGraphics();

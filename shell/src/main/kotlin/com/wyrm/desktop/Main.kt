@@ -97,6 +97,7 @@ internal object DesktopWindow {
     var frame: java.awt.Frame? = null
 
     fun bringToFront() {
+        if (NativeGame.composeHidden) return // the game window is up
         val window = frame ?: return
         if (window.extendedState and java.awt.Frame.ICONIFIED != 0) window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
         window.isVisible = true
@@ -171,7 +172,8 @@ private fun runApp() = application {
     DesktopUpdater.quit = ::close
     Window(
         onCloseRequest = ::close,
-        visible = open,
+        // Hidden while the game window shows the lobby or a match (NativeGame, 2026-11-12).
+        visible = open && !NativeGame.composeHidden,
         focusable = acceptsFocus,
         // Windows' own title bar is gone: Wyrm draws its strip (WindowChrome.kt).
         undecorated = true,
@@ -268,7 +270,7 @@ private fun runApp() = application {
                             DesktopShortcuts.textSessions++
                             try { next.startInputMethod(request) } finally { DesktopShortcuts.textSessions-- }
                         }
-                    }) { WyrmApp() }
+                    }) { DesktopScroll.Provide { WyrmApp() } }
                 }
             }
             // A new version's card, over the app (never over the sign-in or a match).

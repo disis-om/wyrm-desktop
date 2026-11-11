@@ -41,7 +41,35 @@ import java.awt.Toolkit
  */
 internal object DesktopLive {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val inbox = LiveInbox(DesktopContext, BuildConfig.WYRM_API_URL, scope, { kind, _ -> onInbox(kind) }, "windows")
+    private val inbox = LiveInbox(DesktopContext, BuildConfig.WYRM_API_URL, scope, { kind, _ -> onInbox(kind) }, "windows",
+        // Chat as Android (OM, 2026-11-11): deletes, edits, new messages, "Seen", reactions, pins, typing.
+        onMessageDeleted = { _, id -> DesktopChat.drop(id); Social.refreshConversations() },
+        onMessageEdited = { type -> DesktopChat.reload(type) },
+        onChatEvent = { DesktopChat.onEvent(it) },
+    )
+
+    /* Wyrm friends on the minimap (Android, OM 2026-11-07): their last place
+       and icon, kept six seconds; the engine draws them (game/wyrm_extras.c). */
+    private class FriendMark(val x: Int, val y: Int, val icon: Int, val at: Long)
+    private val friendMarks = java.util.concurrent.ConcurrentHashMap<String, FriendMark>()
+    private var friendJob: kotlinx.coroutines.Job? = null
+    private var friendMarksSent = ""
+
+    private fun tickFriendLocations() {
+        val playing = Engine.screen == Engine.SCREEN_PLAYING && !Engine.inAiArena
+        if (playing && inbox.locationWanted) {
+            val me = com.wyrm.omrajput.data.TeamPresence.parse(
+                runCatching { com.wyrm.omrajput.WyrmActivity.nativeTeamPresence() }.getOrNull().orEmpty())
+            if (me.x != 0 || me.y != 0) inbox.sendLocation(me.x, me.y, com.wyrm.omrajput.data.MinimapIcons.wyrm)
+        }
+        val now = System.currentTimeMillis()
+        friendMarks.entries.removeIf { now - it.value.at > 6_000 }
+        val packed = if (!playing) "" else friendMarks.values.joinToString("\n") { "${it.x}\t${it.y}\t${it.icon}" }
+        if (packed != friendMarksSent) {
+            friendMarksSent = packed
+            com.wyrm.omrajput.WyrmActivity.setFriendMarks(packed)
+        }
+    }
     private val runs = PendingRunStore(DesktopContext)
     private var running = false
     private var loop: Job? = null
@@ -73,7 +101,16 @@ internal object DesktopLive {
         idle = false
         nextRunAttemptAt = 0L
         pushPresence()
+        DesktopChat.live = inbox
+        inbox.onFriendLocation = { id, x, y, icon -> friendMarks[id] = FriendMark(x, y, icon, System.currentTimeMillis()) }
         inbox.start()
+        friendJob?.cancel()
+        friendJob = scope.launch {
+            while (isActive && running) {
+                delay(1_000L)
+                tickFriendLocations()
+            }
+        }
         flushRuns()
         loop?.cancel()
         loop = scope.launch {
@@ -99,11 +136,15 @@ internal object DesktopLive {
         loop?.cancel()
         runJob?.cancel()
         runJob = null
+        friendJob?.cancel()
+        friendMarks.clear()
+        if (friendMarksSent.isNotEmpty()) { friendMarksSent = ""; com.wyrm.omrajput.WyrmActivity.setFriendMarks("") }
         inbox.stop()
     }
 
     fun onWindowFocus(focused: Boolean) {
         windowFocused = focused
+        DesktopChat.windowFocused = focused
         if (focused) onInput()
     }
 

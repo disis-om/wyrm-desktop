@@ -40,6 +40,22 @@ int wyrm_desktop_create_surface(void* sdl_window, void* instance, void* surface)
 int wyrm_desktop_laser_wanted(int assist);
 void wyrm_desktop_draw_hint(void);
 
+/* The game window (OM, 2026-11-12, desktop_ui.c): the lobby and the match
+   are the SDL window itself on screen; Compose shows only Home. `env` is a
+   tenv*, `window` an SDL_Window*, `event` an SDL_Event*. */
+int wyrm_desktop_native_shown(void);
+void wyrm_desktop_native_window_poll(void* env, void* window);
+/* 0 = the game gets it too, 1 = ImGui only, 2 = nobody else. */
+int wyrm_desktop_ui_event(void* env, const void* event);
+int wyrm_desktop_ui_event_owned(void);
+void wyrm_desktop_toggle_fullscreen(void);
+/* Main.c, inside the frame's ImGui window: the native lobby, picker, chat
+   box and window strip. True when the lobby drew (nothing else needed). */
+int wyrm_desktop_ui_draw(void* env);
+/* Settings › Developer › Swapchain images (0 = the reference client's). */
+int wyrm_desktop_swap_images(void);
+int wyrm_desktop_swap_images_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

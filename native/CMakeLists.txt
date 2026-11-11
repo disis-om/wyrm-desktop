@@ -30,7 +30,9 @@ find_package(Vulkan REQUIRED)
 add_library(wyrm SHARED
     ${WYRM_C_SOURCES}
     ${WYRM_CXX_SOURCES}
-    "${CMAKE_CURRENT_LIST_DIR}/desktop_bridge.c")
+    "${CMAKE_CURRENT_LIST_DIR}/desktop_bridge.c"
+    # The game window's lobby, picker, chat box and strip (2026-11-12).
+    "${CMAKE_CURRENT_LIST_DIR}/desktop_ui.c")
 
 target_compile_features(wyrm PRIVATE c_std_11 cxx_std_17)
 target_compile_definitions(wyrm PRIVATE
@@ -69,7 +71,8 @@ target_compile_options(wyrm PRIVATE
     $<$<NOT:$<CONFIG:Debug>>:/clang:-O3>)
 
 # crypt32: DPAPI (CryptProtectData) for the team vault key, desktop_bridge.c.
-target_link_libraries(wyrm PRIVATE SDL3::SDL3 Vulkan::Vulkan ws2_32 iphlpapi crypt32)
+# dwmapi: the game window's rounded corners (desktop_ui.c).
+target_link_libraries(wyrm PRIVATE SDL3::SDL3 Vulkan::Vulkan ws2_32 iphlpapi crypt32 dwmapi)
 
 # wyrmwin.dll (2026-10-12): the shell's few Windows calls (rounded corners, the
 # taskbar's AppUserModelID, shortcuts). No SDL or Vulkan, so the installer can

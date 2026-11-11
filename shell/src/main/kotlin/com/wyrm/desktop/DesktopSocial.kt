@@ -106,13 +106,13 @@ internal object Social {
     // Chats
     var conversations by mutableStateOf<List<Conversation>>(emptyList()); private set
     var unreadDm by mutableStateOf(0L); private set
-    var globalMessages by mutableStateOf<List<ChatMessage>>(emptyList()); private set
+    var globalMessages by mutableStateOf<List<ChatMessage>>(emptyList()); internal set
     var globalUnread by mutableStateOf(0); private set
     var threadPlayer by mutableStateOf<ApiPlayer?>(null); private set
-    var threadMessages by mutableStateOf<List<ChatMessage>>(emptyList()); private set
+    var threadMessages by mutableStateOf<List<ChatMessage>>(emptyList()); internal set
     var draft by mutableStateOf("")
-    var sending by mutableStateOf(false); private set
-    var chatError by mutableStateOf(""); private set
+    var sending by mutableStateOf(false); internal set
+    var chatError by mutableStateOf(""); internal set
     private var chatJob: Job? = null
 
     // People

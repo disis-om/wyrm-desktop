@@ -5,6 +5,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -150,9 +151,18 @@ class SkinTextures(
             return out
         }
 
-        private fun BufferedImage.bitmap(): ImageBitmap = toComposeImageBitmap()
+        /* Immutable (OM, 2026-11-11: the Skin page ran at a few frames a
+           second). Compose draws a picture by Skia's Image.makeFromBitmap on
+           every draw; for a mutable bitmap that copies the pixels and uploads
+           a new GPU texture each time, a bead at a time. Immutable, Skia
+           shares the pixels and keeps the one texture. */
+        private fun BufferedImage.bitmap(): ImageBitmap =
+            toComposeImageBitmap().also { it.asSkiaBitmap().setImmutable() }
 
         private fun build(): SkinTextures? {
+        // AIR special-skin art (one eye, closed eyes, slug stalks, antennas):
+        // Android loads it here too (OM, 2026-11-11: special skins drew wrong).
+        runCatching { WyrmExtras.load(com.wyrm.desktop.DesktopContext) }
             val atlas = decode("textures/tex_atlas_8k.png", 2016) ?: return null
             val tagAtlas = decode("textures/wyrm_tags.png", 4096) ?: return null
             val beads = (0 until 42).mapNotNull { id ->
@@ -209,7 +219,7 @@ class SkinTextures(
                     val x = (cell % WyrmSkins.SHEET_COLUMNS) * cw
                     val y = (cell / WyrmSkins.SHEET_COLUMNS) * ch
                     if (sheet.extractSubset(part, org.jetbrains.skia.IRect.makeXYWH(x, y, cw, ch)))
-                        skin.number to part.asComposeImageBitmap()
+                        skin.number to part.apply { setImmutable() }.asComposeImageBitmap()
                     else null
                 }.toMap()
             }.getOrDefault(emptyMap())
@@ -226,7 +236,7 @@ internal fun rememberWyrmSkinFrames(number: Int): State<ImageBitmap?> =
             runCatching {
                 val root = File(System.getProperty("wyrm.android.root") ?: ".", "app/res")
                 org.jetbrains.skia.Bitmap.makeFromImage(org.jetbrains.skia.Image.makeFromEncoded(
-                    File(root, "textures/wyrm_skins_live/$number.webp").readBytes())).asComposeImageBitmap()
+                    File(root, "textures/wyrm_skins_live/$number.webp").readBytes())).apply { setImmutable() }.asComposeImageBitmap()
             }.getOrNull()
         }
     }

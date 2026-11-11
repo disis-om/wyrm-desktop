@@ -138,12 +138,29 @@ fun WyrmApp() {
                             )
                         },
                         bootstrap = { Account.bootstrap() },
+                        startEmail = { email -> runCatching { Account.repository.startRecoveryEmail(email) } },
+                        verifyEmail = { id, code ->
+                            runCatching { Account.repository.verifyRecoveryEmail(id, code) }.fold(
+                                onSuccess = { null },
+                                onFailure = { com.wyrm.omrajput.ui.friendlyRecoveryError(it) },
+                            )
+                        },
+                        forgot = { identifier -> runCatching { Account.repository.forgotPassword(identifier) } },
+                        checkReset = { id, code -> runCatching { Account.repository.checkResetCode(id, code) } },
+                        resetPassword = { id, code, name, newPassword ->
+                            runCatching { Account.repository.resetPassword(id, code, name, newPassword) }.fold(
+                                onSuccess = { Account.acceptSignIn(it); null },
+                                onFailure = { com.wyrm.omrajput.ui.friendlyRecoveryError(it) },
+                            )
+                        },
                         onComplete = { gate = Gate.IN },
                     )
                     2 -> BackgroundSizeEditor()
                     5 -> HudEditor()
-                    1 -> Match()
-                    6 -> DesktopLobby()
+                    // The game window (2026-11-12) draws the lobby and the match itself;
+                    // this window is hidden then and keeps only paper under it.
+                    1 -> if (NativeGame.wanted) NativeBackdrop() else Match()
+                    6 -> if (NativeGame.wanted) NativeBackdrop() else DesktopLobby()
                     7 -> TeamPage(onBack = { ShellNav.teamOpen.value = false })
                     else -> Shell()
                 }
@@ -233,6 +250,12 @@ private fun Failure(message: String) {
         Spacer(Modifier.height(8.dp))
         Text(message, fontFamily = Wyrm.Body, fontSize = 15.sp, color = Wyrm.Mute)
     }
+}
+
+/** Under the game window (NativeGame): the app's paper, nothing to show. */
+@Composable
+private fun NativeBackdrop() {
+    Box(Modifier.fillMaxSize().background(Wyrm.Paper))
 }
 
 /** A match: the engine's frames and the team box above them. */

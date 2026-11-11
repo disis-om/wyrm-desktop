@@ -70,10 +70,28 @@ object Engine {
         }
         // Settings › Display › Look ahead (Android's play feel; it was shown but never
         // reached the engine or the disk before D6).
+        // VSync is off by default on Wyrm Desktop (OM, 2026-11-12), as Vlither run free:
+        // a player who never chose gets off; a saved choice stays.
+        DesktopContext.getSharedPreferences("wyrm_play_feel", 0).let { prefs ->
+            if (!prefs.contains("vsync")) prefs.edit().putBoolean("vsync", false).apply()
+        }
         com.wyrm.omrajput.ui.PlayFeelStore.attach(DesktopContext) { originalArrow, lookAhead, zoomStyle ->
             runCatching { WyrmActivity.nativeSetPlayFeel(originalArrow, lookAhead, zoomStyle) }
         }
+        // Settings › Display › Camera › Auto zoom (Android 8.6.1, OM 2026-11-09).
+        com.wyrm.omrajput.ui.PlayFeelStore.attachAutoZoom { on ->
+            runCatching { WyrmActivity.nativeSetAutoZoom(on) }
+        }
+        // Settings › Display › VSync (OM, 2026-11-12): with the frame cap, one call.
+        com.wyrm.omrajput.ui.PlayFeelStore.attachVsync { EngineSettings.publishFramePolicy() }
         com.wyrm.omrajput.data.PlayOrientation.load(DesktopContext)
+        // Settings › Display › Minimap icons: the NTL `di` goes on the team poll (TeamService).
+        com.wyrm.omrajput.data.MinimapIcons.reload(DesktopContext)
+        // Skin › Background › your own photo (OM, 2026-11-11), as Android.
+        com.wyrm.omrajput.ui.SkinScreenHooks.floorPhotos = { worn, wear -> DesktopFloorPhotos(worn, wear) }
+        DesktopFloors.reload()
+        // Settings › Developer › Diagnostics overlay.
+        DesktopDiagnostics.load()
         // Home › Near Original: slither's own HUD and controls (and the arena's number).
         com.wyrm.omrajput.ui.NearOriginalStore.attach(DesktopContext) { on, server ->
             runCatching { WyrmActivity.nativeSetNearOriginal(on, server) }
@@ -84,6 +102,8 @@ object Engine {
             runCatching { WyrmActivity.nativeSetTeamHudStyle(values) }
         }
         DesktopTeam.start()
+        // The lobby and the match on the engine's own window (2026-11-12).
+        NativeGame.start()
     }
 
     // ---- Arena background size editor (Android's BACKGROUND_SIZE_EDITOR) ----

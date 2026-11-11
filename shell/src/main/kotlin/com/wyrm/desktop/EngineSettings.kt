@@ -285,7 +285,8 @@ object EngineSettings {
     fun publishFramePolicy() {
         val hz = displayHz()
         val cap = if (fpsCap in 1 until hz) fpsCap else hz
-        if (Engine.started) runCatching { WyrmActivity.nativeSetFramePolicy(true, cap) }
+        // Settings › Display › VSync (OM, 2026-11-12): the player's choice now.
+        if (Engine.started) runCatching { WyrmActivity.nativeSetFramePolicy(com.wyrm.omrajput.ui.PlayFeelStore.vsync, cap) }
     }
 
     /** Once the engine is up: everything the app keeps that the engine must know. */

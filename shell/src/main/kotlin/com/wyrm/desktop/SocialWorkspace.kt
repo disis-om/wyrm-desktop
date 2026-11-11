@@ -287,20 +287,8 @@ private fun SectionContent(section: Social.Section) {
     when (section) {
         Social.Section.MESSAGES -> MessagesSection()
         Social.Section.GLOBAL -> SectionColumn(820.dp, "Social", "Global chat", "Everyone on Wyrm, live. Be kind.") {
-            IosGlobalChatScreen(
-                messages = Social.globalMessages,
-                meId = me?.id.orEmpty(),
-                draft = Social.draft,
-                sending = Social.sending,
-                error = Social.chatError,
-                insetTop = 0.dp,
-                insetBottom = 16.dp,
-                onDraftChange = { Social.draft = it },
-                onSend = Social::sendGlobal,
-                onBack = {},
-                onOpenAuthor = Social::openPlayer,
-                onReport = { message, reason -> Social.reportMessage(message, reason) },
-            )
+            // Android's chat (OM, 2026-11-11): markdown, link embeds, replies, reactions, GIFs.
+            DesktopGlobalChat(insetTop = 0.dp, insetBottom = 16.dp, onBack = {})
         }
         Social.Section.LEADERBOARD -> SectionColumn(860.dp, "Arena", "Leaderboard", "The best runs and the most kills on Wyrm.") {
             IosLeaderboardScreen(
@@ -376,23 +364,7 @@ private fun MessagesSection() {
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                         Box(Modifier.widthIn(max = 860.dp).fillMaxSize()) {
-                            IosThreadScreen(
-                                title = shown.displayName,
-                                messages = Social.threadMessages,
-                                meId = me?.id.orEmpty(),
-                                draft = Social.draft,
-                                sending = Social.sending,
-                                error = Social.chatError,
-                                insetTop = 0.dp,
-                                insetBottom = 16.dp,
-                                onDraftChange = { Social.draft = it },
-                                onSend = Social::sendDirect,
-                                onBack = Social::closeThread,
-                                peer = shown,
-                                onPeer = { Social.openPlayer(shown.id) },
-                                activity = FriendPresence.of(shown.id),
-                                onJoin = Social::joinFriendArena,
-                            )
+                            DesktopThreadChat(shown, insetTop = 0.dp, insetBottom = 16.dp, onBack = Social::closeThread)
                         }
                     }
                 }
