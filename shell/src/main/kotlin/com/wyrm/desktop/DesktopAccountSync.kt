@@ -55,7 +55,10 @@ internal object DesktopAccountSync {
         PrefFile("wyrm_ui_preferences", Scope.SYNC),            // theme, intensity, nickname_chosen
         PrefFile("wyrm_near_original", Scope.SYNC),             // also in the shared document
         PrefFile("wyrm_joystick_laser", Scope.SYNC),            // also in the shared document
-        PrefFile("wyrm_play_feel", Scope.SYNC),                 // Display › Look ahead (shared: lookAhead)
+        PrefFile("wyrm_play_feel", Scope.SYNC),                 // Display › Look ahead, Auto zoom (shared: lookAhead, autoZoom)
+        PrefFile("wyrm_custom_floors", Scope.WIPE),             // Background › your photos (this computer only, never uploaded)
+        PrefFile("wyrm_minimap_icons", Scope.SYNC),             // Display › Minimap icons (shared: ntlMinimapIcon, wyrmMinimapIcon)
+        PrefFile("wyrm_developer", Scope.SYNC, keys = setOf("overlay", "on", "swap_images")), // Developer › Diagnostics overlay, Developer Mode, Swapchain images (this platform only)
         PrefFile("wyrm_team_hud", Scope.SYNC),                  // roster + chat window look
         PrefFile("wyrm_skin_studio", Scope.SYNC),               // saved patterns
         PrefFile("wyrm_saved_skins", Scope.SYNC),               // Skin › Saved skins (as Android)
@@ -173,7 +176,8 @@ internal object DesktopAccountSync {
     fun sharedDocument(): JSONObject {
         val doc = JSONObject((sharedBase ?: JSONObject()).toString()).put("schema", 1)
         doc.put("skin", Engine.skin.toTrailSkin(WyrmLookStore.spec()).toJson())
-        doc.put("arenaBackground", Engine.arenaBackground)
+        // Your own photo (200) stays on this computer: the document keeps the last shared floor.
+        if (Engine.arenaBackground != DesktopFloors.INDEX) doc.put("arenaBackground", Engine.arenaBackground)
         val nickname = HomeState.nickname.ifEmpty { Engine.savedNickname }
         doc.put("nickname", nickname)
         val ui = DesktopContext.getSharedPreferences("wyrm_ui_preferences", 0)
@@ -182,6 +186,9 @@ internal object DesktopAccountSync {
         doc.put("joystickLaser", JSONObject().put("on", JoystickLaserStore.on).put("length", JoystickLaserStore.length.toDouble()))
         // Look ahead is set here too (Settings › Display); arrow motion and zoom style are the phones'.
         doc.put("lookAhead", com.wyrm.omrajput.ui.PlayFeelStore.lookAhead)
+        doc.put("autoZoom", com.wyrm.omrajput.ui.PlayFeelStore.autoZoom)
+        doc.put("ntlMinimapIcon", com.wyrm.omrajput.data.MinimapIcons.ntl)
+        doc.put("wyrmMinimapIcon", com.wyrm.omrajput.data.MinimapIcons.wyrm)
         // The snake look and Auto restart: only what the engine has reported.
         val reported = engineSettings().associateBy { it.id }
         reported["general.auto_respawn"]?.let { doc.put("autoRestart", it.number >= 0.5f) }
@@ -291,7 +298,9 @@ internal object DesktopAccountSync {
             WyrmLookStore.wear(skin.lookSpec())
         }
         val background = doc.optInt("arenaBackground", -1)
-        if (background >= 0) Engine.skinBackground(background)
+        // Never 200 without a photo on this computer; a photo worn here stays worn.
+        if (background >= 0 && background != DesktopFloors.INDEX && Engine.arenaBackground != DesktopFloors.INDEX)
+            Engine.skinBackground(background)
         if (doc.has("nickname")) {
             val name = doc.optString("nickname").take(24)
             HomeState.nickname = name
@@ -314,6 +323,12 @@ internal object DesktopAccountSync {
             DesktopContext.getSharedPreferences("wyrm_play_feel", 0).edit()
                 .putBoolean("look_ahead", doc.optBoolean("lookAhead", false)).commit()
         }
+        (doc.opt("autoZoom") as? Boolean)?.let {
+            DesktopContext.getSharedPreferences("wyrm_play_feel", 0).edit().putBoolean("auto_zoom", it).commit()
+        }
+        // Minimap icons (Android's keys): each on its own, an unknown number skipped.
+        com.wyrm.omrajput.data.MinimapIcons.restore(DesktopContext,
+            (doc.opt("ntlMinimapIcon") as? Number)?.toInt(), (doc.opt("wyrmMinimapIcon") as? Number)?.toInt())
         fun bool(key: String, id: String) {
             if (doc.has(key)) writeSetting(id, floatArrayOf(if (doc.optBoolean(key, false)) 1f else 0f))
         }
@@ -356,6 +371,9 @@ internal object DesktopAccountSync {
         DesktopCursors.reload()
         DesktopShortcuts.reload()
         com.wyrm.omrajput.ui.PlayFeelStore.reload(DesktopContext)
+        com.wyrm.omrajput.data.MinimapIcons.reload(DesktopContext)
+        DesktopFloors.reload()
+        DesktopDiagnostics.load()
         com.wyrm.omrajput.data.DropWatch.reloadPrefs()
         com.wyrm.omrajput.data.CrashWatch.reloadPrefs()
         EngineSettings.refresh()

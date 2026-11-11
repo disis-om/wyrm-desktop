@@ -68,6 +68,8 @@ private class GameCanvas : Canvas() {
     private val buttons = mutableSetOf<Int>()
     private var lastX = 0f
     private var lastY = 0f
+    private var lastWheelAt = 0L
+    private var lastWheelRotation = 0.0
 
     init {
         background = java.awt.Color(0x09, 0x09, 0x09)
@@ -91,7 +93,14 @@ private class GameCanvas : Canvas() {
                 if (buttons.remove(button)) WyrmActivity.nativeDesktopPointer(2, lastX, lastY, button, 0f)
             }
             override fun mouseWheelMoved(e: MouseWheelEvent) {
-                move(e)
+                // A wheel or touchpad step keeps the pointer where the last
+                // real move put it (OM, 2026-11-11): a wheel event's own x/y
+                // (child window, display scale) could differ and threw the
+                // laser and the aim off. The same step delivered twice
+                // (same time, same amount) zooms once.
+                if (e.`when` == lastWheelAt && e.preciseWheelRotation == lastWheelRotation) return
+                lastWheelAt = e.`when`
+                lastWheelRotation = e.preciseWheelRotation
                 // Compose sent -scrollDelta.y; AWT's rotation has the same sign as that delta.
                 WyrmActivity.nativeDesktopPointer(3, lastX, lastY, 0, (-e.preciseWheelRotation).toFloat())
             }

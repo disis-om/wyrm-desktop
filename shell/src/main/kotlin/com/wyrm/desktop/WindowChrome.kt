@@ -113,6 +113,15 @@ internal object WindowChrome {
         frame.bounds = Rectangle((pointerX - old.width * fraction).toInt(), pointerY - 18, old.width, old.height)
     }
 
+    /** Maximised and the size to go back to, for the game window (NativeGame, 2026-11-12). */
+    fun snapshot(): Pair<Boolean, Rectangle?> = maximized to (if (maximized) restore else null)
+
+    /** The game window handed back: its maximise and the size behind it. */
+    fun adopt(max: Boolean, back: Rectangle?) {
+        maximized = max && back != null
+        restore = if (maximized) back else null
+    }
+
     /** Leaving the app's size (sign-in shrinks it): no stale maximise. */
     fun forget() {
         maximized = false

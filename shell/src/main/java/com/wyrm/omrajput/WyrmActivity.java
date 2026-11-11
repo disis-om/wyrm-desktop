@@ -72,9 +72,24 @@ public final class WyrmActivity {
     /** Settings › Display › Look ahead (and the phones' arrow motion / zoom style), Android's JNI. */
     public static native void nativeSetPlayFeel(boolean originalArrow, boolean lookAhead, int zoomStyle);
     public static native void nativeSetFramePolicy(boolean vsync, int cap);
+    /** Settings › Display › Camera › Auto zoom (game/wyrm_extras.c), Android's JNI. */
+    public static native void nativeSetAutoZoom(boolean on);
+    /** Settings › Developer › Diagnostics overlay (game/wyrm_diag.c), Android's JNI. */
+    public static native void nativeSetDiagnostics(boolean on);
+    public static native void nativePushDiagnostics(float[] values, String text);
 
     // ---- Team mode, NTL (android_team.c), same as on Android ----
     public static native String nativeTeamPresence();
+    /** Wyrm friends on the minimap (Android, OM 2026-11-07): x/y/icon lines, tab separated; game/wyrm_extras.c. */
+    private static native void nativeSetFriendMarks(String packed);
+    /** Your own photo as the arena floor (Android, OM 2026-11-08); "" forgets it. game/wyrm_extras.c. */
+    private static native void nativeSetCustomFloor(String path, int width, int height);
+    public static void setCustomFloor(String path, int width, int height) {
+        try { nativeSetCustomFloor(path, width, height); } catch (UnsatisfiedLinkError ignored) { }
+    }
+    public static void setFriendMarks(String packed) {
+        try { nativeSetFriendMarks(packed); } catch (UnsatisfiedLinkError ignored) { }
+    }
     public static native void nativeSetTeamMembers(String packed);
     public static native void nativeSetTeamChat(String packed);
     public static native void nativeSetTeamHudStyle(float[] values);
@@ -87,6 +102,28 @@ public final class WyrmActivity {
     public static native void nativeToggleChatPanel();
     /** Desktop only: where the roster and chat window were drawn (x, y, w, h each). */
     public static native float[] nativeDesktopTeamRects();
+
+    // ---- The game window (OM, 2026-11-12; native/desktop_ui.c) ----
+    /** The lobby and the match on the engine's own window, at the Compose window's place, or back to Home. */
+    public static native void nativeDesktopGameWindow(boolean show, long composeHwnd, boolean maximized,
+                                                      int restoreX, int restoreY, int restoreW, int restoreH,
+                                                      boolean fullscreen);
+    /** {x, y, w, h, maximized, restore x, y, w, h, fullscreen, shown}, physical pixels. */
+    public static native int[] nativeDesktopGameWindowState();
+    /** 0 lobby, 1 arena picker, 2 chat box: "key=value" lines (NativeGame.kt). */
+    public static native void nativeDesktopUiModel(int kind, String text);
+    /** An RGBA picture for the native pages (the W, icons, flags). */
+    public static native void nativeDesktopUiImage(String name, int width, int height, byte[] rgba);
+    /** Wyrm's pointer (RGBA + hotspot), or none for Windows' own. */
+    public static native void nativeDesktopUiCursor(byte[] rgba, int width, int height, int hotX, int hotY);
+    /** The game window's taskbar icon (RGBA). */
+    public static native void nativeDesktopUiIcon(byte[] rgba, int width, int height);
+    /** Settings › Developer › Swapchain images: 0 = the reference client's count. */
+    public static native void nativeDesktopSetSwapImages(int images);
+    /** The game window's pages: what the player did (engine thread). */
+    public static void desktopUiActionFromNative(int action, String text) {
+        com.wyrm.desktop.NativeGame.onAction(action, text);
+    }
 
     /** Live Wyrm skin preview (OM, 2026-10-25; game/wyrm_skin_preview.c), as Android. */
     private static native long nativeWyrmSkinPreview(int skin, float w, float h, double now, int rgb,

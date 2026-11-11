@@ -18,7 +18,13 @@ public final class BitmapFactory {
         } catch (Exception error) { return null; }
     }
 
+    /** Android's three-argument decode: the padding is unused, options ignored (always ARGB). */
+    public static Bitmap decodeStream(java.io.InputStream stream, Rect outPadding, Options options) {
+        return decodeStream(stream);
+    }
+
     public static class Options {
+        public Bitmap.Config inPreferredConfig = Bitmap.Config.ARGB_8888;
         public boolean inJustDecodeBounds;
         public int inSampleSize = 1;
         public int outWidth = -1;

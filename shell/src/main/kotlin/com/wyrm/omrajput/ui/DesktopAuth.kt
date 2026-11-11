@@ -83,6 +83,12 @@ fun DesktopAuth(
     signUp: suspend (username: String, password: String) -> String?,
     logIn: suspend (username: String, password: String) -> String?,
     bootstrap: suspend () -> Unit,
+    /** Recovery email and Forgot password (Android 8.6.5, OM 2026-11-11). */
+    startEmail: suspend (email: String) -> Result<String>,
+    verifyEmail: suspend (challengeId: String, code: String) -> String?,
+    forgot: suspend (identifier: String) -> Result<String>,
+    checkReset: suspend (challengeId: String, code: String) -> Result<List<String>>,
+    resetPassword: suspend (challengeId: String, code: String, username: String?, newPassword: String) -> String?,
     onComplete: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -100,6 +106,15 @@ fun DesktopAuth(
     var logoDissolved by remember { mutableStateOf(false) }
     var focusTarget by remember { mutableStateOf<AuthField?>(null) }
     var focusPulse by remember { mutableIntStateOf(0) }
+    var email by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var identifier by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var challengeId by remember { mutableStateOf("") }
+    var resetNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    var resetUser by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         delay(260)
@@ -112,9 +127,13 @@ fun DesktopAuth(
 
     val usernameValid = usernamePattern.matches(username)
     val passwordValid = password.length in 8..200
+    val emailValid = emailPattern.matches(email.trim()) && email.trim().length <= 254
+    val codeValid = code.length == 6
+    val newPasswordValid = newPassword.length in 8..200
 
     fun enter(next: AuthStage, focus: AuthField?) {
         errorMessage = ""
+        notice = ""
         focusManager.clearFocus()
         stage = next
         focusTarget = focus
@@ -147,9 +166,17 @@ fun DesktopAuth(
         AuthStage.CREATE_PASSWORD -> passwordValid
         AuthStage.LOGIN_PASSWORD -> password.isNotEmpty() && password.length <= 200
         AuthStage.CREATE_CONFIRMATION -> passwordValid && confirmationState == ConfirmationState.MATCHED
+        AuthStage.CREATE_EMAIL -> email.isBlank() || emailValid
+        AuthStage.EMAIL_CODE, AuthStage.FORGOT_CODE -> codeValid && !busy
+        AuthStage.FORGOT_ID -> identifier.isNotBlank() && !busy
+        AuthStage.FORGOT_NEW -> newPasswordValid && !busy
         else -> false
     }
     val showsAction = when (stage) {
+        AuthStage.CREATE_EMAIL -> true
+        AuthStage.EMAIL_CODE, AuthStage.FORGOT_CODE -> code.isNotEmpty()
+        AuthStage.FORGOT_ID -> identifier.isNotBlank()
+        AuthStage.FORGOT_NEW -> newPassword.isNotEmpty()
         AuthStage.CREATE_USERNAME -> usernameValid
         AuthStage.LOGIN_USERNAME -> username.isNotEmpty()
         AuthStage.CREATE_PASSWORD, AuthStage.LOGIN_PASSWORD -> password.isNotEmpty()
@@ -158,13 +185,19 @@ fun DesktopAuth(
     }
     val showsBack = stage in setOf(
         AuthStage.CREATE_USERNAME, AuthStage.CREATE_PASSWORD, AuthStage.CREATE_CONFIRMATION,
-        AuthStage.LOGIN_USERNAME, AuthStage.LOGIN_PASSWORD,
+        AuthStage.LOGIN_USERNAME, AuthStage.LOGIN_PASSWORD, AuthStage.CREATE_EMAIL,
+        AuthStage.FORGOT_ID, AuthStage.FORGOT_CODE, AuthStage.FORGOT_PICK, AuthStage.FORGOT_NEW,
     )
     val actionTitle = when (stage) {
         AuthStage.CREATE_USERNAME, AuthStage.LOGIN_USERNAME -> "Continue"
         AuthStage.CREATE_PASSWORD -> "Next"
         AuthStage.LOGIN_PASSWORD -> "Log in"
-        AuthStage.CREATE_CONFIRMATION -> "Create account"
+        AuthStage.CREATE_CONFIRMATION -> "Next"
+        AuthStage.CREATE_EMAIL -> if (email.isBlank()) "Skip" else "Create account"
+        AuthStage.EMAIL_CODE -> if (busy) "Checking…" else "Verify"
+        AuthStage.FORGOT_ID -> if (busy) "Sending…" else "Send code"
+        AuthStage.FORGOT_CODE -> if (busy) "Checking…" else "Continue"
+        AuthStage.FORGOT_NEW -> if (busy) "Saving…" else "Reset password"
         else -> "Continue"
     }
 
@@ -179,10 +212,19 @@ fun DesktopAuth(
             if (failure != null) {
                 val usernameFailure = create && failure.contains("username", ignoreCase = true)
                 enter(
-                    if (usernameFailure) AuthStage.CREATE_USERNAME else if (create) AuthStage.CREATE_CONFIRMATION else AuthStage.LOGIN_PASSWORD,
-                    if (usernameFailure) AuthField.USERNAME else if (create) AuthField.CONFIRMATION else AuthField.PASSWORD,
+                    if (usernameFailure) AuthStage.CREATE_USERNAME else if (create) AuthStage.CREATE_EMAIL else AuthStage.LOGIN_PASSWORD,
+                    if (usernameFailure) AuthField.USERNAME else if (create) AuthField.EMAIL else AuthField.PASSWORD,
                 )
                 errorMessage = failure
+                return@launch
+            }
+            // Email given at sign-up: send its code now the account exists.
+            val wanted = email.trim()
+            if (create && wanted.isNotEmpty()) {
+                startEmail(wanted).fold(
+                    onSuccess = { challengeId = it; enter(AuthStage.EMAIL_CODE, AuthField.CODE); notice = "We sent a 6-digit code to $wanted." },
+                    onFailure = { enter(AuthStage.EMAIL_CODE, AuthField.CODE); errorMessage = friendlyRecoveryError(it) },
+                )
                 return@launch
             }
             // The W stays until the account's surfaces are fetched, so Home
@@ -196,6 +238,49 @@ fun DesktopAuth(
         }
     }
 
+    /** Signed in already (email code step or a reset): fetch the account, then Home. */
+    fun finishSignedIn() {
+        if (authJob?.isActive == true) return
+        focusManager.clearFocus()
+        errorMessage = ""
+        logoDissolved = false
+        stage = AuthStage.SIGNING_IN
+        authJob = scope.launch {
+            runCatching { kotlinx.coroutines.withTimeout(30_000L) { bootstrap() } }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException && it !is kotlinx.coroutines.TimeoutCancellationException) throw it }
+            stage = AuthStage.SUCCESS
+            delay(700)
+            logoDissolved = true
+            delay(520)
+            onComplete()
+        }
+    }
+
+    fun work(block: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        errorMessage = ""
+        scope.launch { try { block() } finally { busy = false } }
+    }
+
+    fun sendEmailCode() = work {
+        startEmail(email.trim()).fold(
+            onSuccess = { challengeId = it; code = ""; notice = "We sent a new code to ${email.trim()}." },
+            onFailure = { errorMessage = friendlyRecoveryError(it) },
+        )
+    }
+
+    fun sendResetCode() = work {
+        forgot(identifier.trim()).fold(
+            onSuccess = {
+                challengeId = it; code = ""; resetUser = null; resetNames = emptyList()
+                enter(AuthStage.FORGOT_CODE, AuthField.CODE)
+                notice = "If this account has an email, a 6-digit code is on its way. Check spam too."
+            },
+            onFailure = { errorMessage = friendlyRecoveryError(it) },
+        )
+    }
+
     fun advance() {
         if (!actionEnabled) return
         when (stage) {
@@ -203,7 +288,30 @@ fun DesktopAuth(
             AuthStage.LOGIN_USERNAME -> enter(AuthStage.LOGIN_PASSWORD, AuthField.PASSWORD)
             AuthStage.CREATE_PASSWORD -> enter(AuthStage.CREATE_CONFIRMATION, AuthField.CONFIRMATION)
             AuthStage.LOGIN_PASSWORD -> authenticate(create = false)
-            AuthStage.CREATE_CONFIRMATION -> authenticate(create = true)
+            AuthStage.CREATE_CONFIRMATION -> enter(AuthStage.CREATE_EMAIL, AuthField.EMAIL)
+            AuthStage.CREATE_EMAIL -> authenticate(create = true)
+            AuthStage.EMAIL_CODE -> work {
+                val failure = verifyEmail(challengeId, code)
+                if (failure == null) finishSignedIn() else errorMessage = failure
+            }
+            AuthStage.FORGOT_ID -> sendResetCode()
+            AuthStage.FORGOT_CODE -> work {
+                checkReset(challengeId, code).fold(
+                    onSuccess = { names ->
+                        resetNames = names
+                        if (names.size > 1) enter(AuthStage.FORGOT_PICK, null)
+                        else { resetUser = names.firstOrNull(); newPassword = ""; enter(AuthStage.FORGOT_NEW, AuthField.NEW_PASSWORD) }
+                    },
+                    onFailure = { errorMessage = friendlyRecoveryError(it) },
+                )
+            }
+            AuthStage.FORGOT_NEW -> work {
+                val failure = resetPassword(challengeId, code, resetUser, newPassword)
+                if (failure == null) {
+                    username = resetUser ?: username
+                    finishSignedIn()
+                } else errorMessage = failure
+            }
             else -> Unit
         }
     }
@@ -214,6 +322,11 @@ fun DesktopAuth(
             AuthStage.CREATE_PASSWORD -> enter(AuthStage.CREATE_USERNAME, AuthField.USERNAME)
             AuthStage.CREATE_CONFIRMATION -> enter(AuthStage.CREATE_PASSWORD, AuthField.PASSWORD)
             AuthStage.LOGIN_PASSWORD -> enter(AuthStage.LOGIN_USERNAME, AuthField.USERNAME)
+            AuthStage.CREATE_EMAIL -> enter(AuthStage.CREATE_CONFIRMATION, AuthField.CONFIRMATION)
+            AuthStage.FORGOT_ID -> enter(AuthStage.LOGIN_PASSWORD, AuthField.PASSWORD)
+            AuthStage.FORGOT_CODE -> enter(AuthStage.FORGOT_ID, AuthField.IDENTIFIER)
+            AuthStage.FORGOT_PICK -> enter(AuthStage.FORGOT_CODE, AuthField.CODE)
+            AuthStage.FORGOT_NEW -> if (resetNames.size > 1) enter(AuthStage.FORGOT_PICK, null) else enter(AuthStage.FORGOT_CODE, AuthField.CODE)
             else -> Unit
         }
     }
@@ -284,6 +397,41 @@ fun DesktopAuth(
                                 errorMessage = errorMessage,
                                 actionEnabled = actionEnabled,
                                 onSubmit = ::advance,
+                                onForgot = {
+                                    identifier = username
+                                    enter(AuthStage.FORGOT_ID, AuthField.IDENTIFIER)
+                                },
+                                focusTarget = focusTarget,
+                                focusPulse = focusPulse,
+                            )
+                        }
+                    }
+                    AuthStage.CREATE_EMAIL, AuthStage.EMAIL_CODE, AuthStage.FORGOT_ID, AuthStage.FORGOT_CODE,
+                    AuthStage.FORGOT_PICK, AuthStage.FORGOT_NEW -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        Box(Modifier.widthIn(max = 460.dp).fillMaxSize()) {
+                            RecoveryStage(
+                                stage = shown,
+                                keyboardHeight = 0.dp,
+                                email = email,
+                                onEmail = { email = it.filterNot(Char::isWhitespace).take(254); errorMessage = "" },
+                                code = code,
+                                onCode = { code = it.filter(Char::isDigit).take(6); errorMessage = "" },
+                                identifier = identifier,
+                                onIdentifier = { identifier = it.trim().take(254); errorMessage = "" },
+                                newPassword = newPassword,
+                                onNewPassword = { newPassword = it.take(200); errorMessage = "" },
+                                resetNames = resetNames,
+                                onPick = { name -> resetUser = name; newPassword = ""; enter(AuthStage.FORGOT_NEW, AuthField.NEW_PASSWORD) },
+                                resetUser = resetUser,
+                                notice = notice,
+                                errorMessage = errorMessage,
+                                actionEnabled = actionEnabled,
+                                busy = busy,
+                                onSubmit = ::advance,
+                                onSkip = {
+                                    if (shown == AuthStage.CREATE_EMAIL) { email = ""; authenticate(create = true) } else finishSignedIn()
+                                },
+                                onResend = { if (shown == AuthStage.EMAIL_CODE) sendEmailCode() else sendResetCode() },
                                 focusTarget = focusTarget,
                                 focusPulse = focusPulse,
                             )
