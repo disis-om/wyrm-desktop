@@ -3,15 +3,15 @@
   "productName": "Wyrm",
   "packageName": "com.wyrm.desktop",
   "platform": "windows",
-  "versionCode": 120,
-  "versionName": "1.2.0",
+  "versionCode": 121,
+  "versionName": "1.2.1",
   "minimumVersionCode": 0,
   "mandatory": false,
-  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.2.0/WyrmSetup-1.2.0.exe",
-  "setupSize": 121043520,
-  "sha256": "81eb6d4b0a847d52d8407b26302c85cef419f416804317658ddf19e4e14294a7",
-  "publishedAt": "2026-11-11T21:06:08Z",
+  "setupUrl": "https://github.com/disis-om/wyrm-desktop/releases/download/v1.2.1/WyrmSetup-1.2.1.exe",
+  "setupSize": 121150298,
+  "sha256": "40bc92b239dd2766636c0280969b986c3ba9172a4da2936ae161f1614501a9e0",
+  "publishedAt": "2026-11-11T22:27:12Z",
   "headline": "A new version of Wyrm",
   "author": "OM Rajput",
-  "releaseNotes": ["This is the stable release after the beta release.", "It is not the official release yet: it is being tested now, and the next version will be the final official release.", "Still, this version is good to go."]
+  "releaseNotes": ["The lobby and the match now run in Wyrm's own game window: smoother, no flicker.", "VSync switch in Settings > Display (off by default).", "Steering near your snake's head behaves like Vlither.", "Developer Mode in Settings > Developer, with a swapchain images option."]
 }
